@@ -7,8 +7,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+// DTO serializado como JSONB em CasoRevisional.resultado (laudo processado)
 @Data
-public record ResultadoCalculo {
+public class ResultadoCalculo {
 
     private String status = "Pendente";
     private Double taxaMensalContratoApuradaPct;

@@ -2,9 +2,9 @@ package br.com.mpgsistemas.revisionalweb.api.dto;
 
 import lombok.Data;
 
-
+// DTO serializado como JSONB em CasoRevisional.mercado (dados da API SGS 25471 do BCB)
 @Data
-public record ReferenciaMercado {
+public class ReferenciaMercado {
 
     private String fonte = "BCB SGS 25471";
     private String codigoModalidade = "25471";

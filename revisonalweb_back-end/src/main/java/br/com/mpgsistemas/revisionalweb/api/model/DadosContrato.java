@@ -1,19 +1,14 @@
 package br.com.mpgsistemas.revisionalweb.api.model;
 
-import jakarta.persistence.*;
 import lombok.Data;
 
 import java.util.HashMap;
 import java.util.Map;
 
-@Entity
-@Table(name = "table_dados_contrato")
+// DTO serializado como JSONB em CasoRevisional.contrato (dados brutos extraidos via OCR).
+// NAO e uma tabela: vive dentro do JSONB do caso. Wrappers em todos numericos (null safety OCR).
 @Data
 public class DadosContrato {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id_dados_contrato;
 
     // --- Dados de Identificação e Cadastro ---
     private String clienteNome = "";

@@ -1,32 +1,20 @@
 package br.com.mpgsistemas.revisionalweb.api.model;
 
-
-import jakarta.persistence.*;
 import lombok.Data;
 
+// Value object nested em DadosContrato (JSONB). Um campo extraido via OCR com confianca/evidencia.
 @Data
-@Entity
-@Table(name = "table_campo_extraido")
 public class CampoExtraido {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_c_extraido")
-    private Long id_c_extraido;
-
-    @Column(nullable = false, length = 1000)
     private String nome;
 
-    @Column(nullable = false, length = 1000)
-    private Object valor;
+    // Valor cru extraido via OCR (sempre texto; conversao numerica e feita no Service)
+    private String valor;
 
-    @Column(nullable = false, length = 1000)
+    // Null safety: wrapper Double (campo pode vir vazio do OCR)
     private Double confianca = 0.0;
 
-    @Column(nullable = false, length = 1000)
     private String evidencia = "";
 
-    @Column(nullable = false, length = 1000)
     private String origem = "manual";
-
 }

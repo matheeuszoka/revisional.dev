@@ -1,12 +1,11 @@
 package br.com.mpgsistemas.revisionalweb.api.model;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.Table;
 import lombok.Data;
+import org.springframework.stereotype.Component;
 
-@Entity
+// Singleton injetavel de parametros de dominio (evita magic numbers). NAO e tabela.
+@Component
 @Data
-@Table(name = "table_parametros_sistema")
 public class ParametrosSistema {
 
     private double toleranciaModerada = 1.50;
@@ -23,5 +22,4 @@ public class ParametrosSistema {
     private String bcbCodigoModalidade = "25471";
     private String bcbUrlApi = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.25471/dados?formato=json";
     private int bcbTimeoutSegundos = 8;
-
 }

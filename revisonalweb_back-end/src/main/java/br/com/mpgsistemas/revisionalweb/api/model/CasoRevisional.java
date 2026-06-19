@@ -17,15 +17,19 @@ public class CasoRevisional {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id_caso_revisional")
     private Long id_caso_revisional;
 
     private String titulo;
+
+    @Column(updatable = false)
     private LocalDateTime criadoEm;
     private LocalDateTime atualizadoEm;
 
     // MULTIPLICIDADE: N Casos pertencem a 1 Usuário (Many-to-One)
-    @ManyToOne
-    @JoinColumn(name = "owner_cpf", nullable = false)
+    // FK aponta para Usuario.cpf (chave de negócio única), não para o id
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_cpf", referencedColumnName = "cpf", nullable = false)
     private Usuario auditor;
 
     // MULTIPLICIDADE: 1 Caso tem N Documentos anexados (One-to-Many)
@@ -51,6 +55,15 @@ public class CasoRevisional {
     @Column(columnDefinition = "jsonb")
     private ResultadoCalculo resultado;
 
+    @PrePersist
+    void aoCriar() {
+        this.criadoEm = LocalDateTime.now();
+        this.atualizadoEm = this.criadoEm;
+    }
 
+    @PreUpdate
+    void aoAtualizar() {
+        this.atualizadoEm = LocalDateTime.now();
+    }
 }
 
