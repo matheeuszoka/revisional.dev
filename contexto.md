@@ -125,3 +125,19 @@ Sempre utilize estes termos em português no código:
 | `SPRING_DATASOURCE_USERNAME` | Usuário do banco de dados. |
 | `SPRING_DATASOURCE_PASSWORD` | Senha do banco de dados. |
 | `BCB_API_TIMEOUT` | Tempo máximo de espera para consulta na API do Bacen. |
+
+
+stacks: Tecnologia
+Java 17 (LTS)
+Spring Boot 3.3.x
+Spring MVC + react com Material UI v7, SweetAlert2
+Spring Data JPA + PostgreSQL
+Flyway
+Spring Security (form login, CSRF nativo, BCrypt)
+Apache PDFBox / OpenPDF
+Apache PDFBox + Tess4J
+Spring RestClient
+Bean Validation (jakarta.validation)
+JUnit 5 + Mockito + Testcontainers
+Maven
+Docker (multi-stage) + docker-compose

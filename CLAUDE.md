@@ -1,4 +1,4 @@
-    # CLAUDE.md
+    aude# CLAUDE.md
 
 Diretrizes arquiteturais, regras de negócio e stack para o Claude Code (ou qualquer IA) trabalhar neste repositório. Baseado em `contexto.md` (visão de produto) e ajustado ao estado real do código.
 
@@ -60,7 +60,53 @@ npm start                     # Dev server, proxy /api → localhost:8080
 - **`develop`** — branch de trabalho e integração (commitar aqui).
 - **`main`** — produção (release). **Protegida**: merge só via Pull Request (1 approval, force-push e delete bloqueados, `enforce_admins` ativo).
 
-Deploy futuro: GitHub Actions ao merge em `main`, VPS via Docker Compose + reverse proxy (Nginx/Apache) para SSL e roteamento (`/api`→backend, `/`→frontend).
+### Commits
+- **Não adicionar a Anthropic/Claude como co-autor** nos commits. Nada de `Co-Authored-By: Claude` nem rodapé "🤖 Generated with Claude Code". Mesmo padrão do projeto `sigapsi.dev`.
+
+## 🔄 CI/CD e Deploy (modelo herdado do projeto sigapsi.dev)
+
+Pipeline de deploy contínuo via **GitHub Actions + SSH** numa VPS Linux rodando Docker Compose. Padrão validado no projeto irmão `sigapsi.dev` e adaptado aqui.
+
+### Gatilho
+- Push/merge em **`main`** dispara `.github/workflows/deploy.yml`.
+- Job usa `appleboy/ssh-action`: conecta na VPS, `git pull origin main`, sobe os containers e limpa imagens órfãs.
+
+```yaml
+# .github/workflows/deploy.yml (modelo)
+name: Deploy Revisional
+on:
+  push:
+    branches: [ "main" ]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /home/ubuntu/revisional
+            git pull origin main
+            cd docker
+            docker compose -f docker-compose.prod.yml up -d --build
+            docker image prune -f
+```
+
+### Secrets GitHub necessários
+`HOST` (IP/host da VPS), `USERNAME` (usuário SSH), `SSH_KEY` (chave privada). Definir em *Settings → Secrets and variables → Actions*.
+
+### Topologia Docker em produção (`docker/docker-compose.prod.yml`)
+- **postgres:16** — volume persistente `../data/postgres`, credenciais via `.env`.
+- **backend** — build de `revisonalweb_back-end/` (multi-stage: `maven:3.9-eclipse-temurin-17` → empacota WAR → `tomcat:11.0-jdk17` como `ROOT.war`, porta 8080).
+- **frontend** — build de `revisional_front-end/` (multi-stage: `node:20-alpine` → `npm run build` → `nginx:stable-alpine` servindo `build/`, porta 80).
+- **apache-proxy** (`httpd:alpine`) — reverse proxy SSL nas portas 80/443: `/api/`→`backend:8080`, `/`→`frontend:80`. Habilita módulos proxy/ssl/rewrite via `sed` no boot.
+- **certbot** — Let's Encrypt, renovação de certificado via webroot challenge (`/.well-known/acme-challenge/`).
+- Rede bridge dedicada; todos os serviços `restart: always`.
+
+> Estes arquivos (`docker/`, Dockerfiles, `deploy.yml`, vhost Apache) **ainda não existem** neste repo — são o alvo a criar, espelhando `sigapsi.dev`. O backend é WAR (igual ao sigapsi), então o Dockerfile do backend reaproveita o mesmo padrão Tomcat.
 
 ## 🏗️ Arquitetura Back-end (alvo: Clean Architecture)
 
