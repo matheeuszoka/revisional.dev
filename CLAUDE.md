@@ -134,10 +134,30 @@ jobs:
 ## 💻 Arquitetura Front-end
 
 - **Core:** React 19, React Router DOM v7 (CRA).
-- **UI:** **Material UI (MUI) v7** — Cards, Grids, Tabelas obrigatoriamente via MUI.
-- **Feedback:** **SweetAlert2** para confirmações/erros/sucesso/exclusão. Nunca `alert()` nativo.
-- **HTTP:** Axios com JWT do Local/SessionStorage.
+- **UI:** **Material UI (MUI) v7** — Cards, Grids, Tabelas obrigatoriamente via MUI. ⚠️ **Não subir para MUI v8/v9**: quebram o build do CRA/react-scripts (resolução ESM "fully specified" do `react-transition-group`). Fixado em `^7`.
+- **Feedback:** **SweetAlert2** para confirmações/erros/sucesso/exclusão. Nunca `alert()` nativo. Wrappers em `src/services/alerts.js`.
+- **HTTP:** Axios (`src/services/api.js`, `baseURL: /api`, dev via `proxy` no `package.json` → `:8080`). Interceptors anexam o JWT e tratam 401 (logout + redirect).
 - **Arquivos:** PDFs via `Blob` + `<iframe src={blobUrl}>`.
+
+## 🔑 Autenticação (implementada — padrão herdado do sigapsi.dev)
+
+JWT stateless com Spring Security. Espelha o sigapsi e melhora o controle de sessão.
+
+### Back-end (`security/`, `service/`, `controller/`)
+- **Lib JWT:** `com.auth0:java-jwt` (HMAC256, issuer `revisional-api`, exp 2h). `TokenService`.
+- **`Usuario implements UserDetails`** — login por **email OU cpf OU oab** (`UsuarioRepository.findByEmailOrCpfOrOab`). `getUsername()` = cpf (principal canônico).
+- **Roles** (`UsuarioRole`, `@Enumerated(STRING)`): `ROLE_ADMIN`, `ROLE_AUDITOR`, `ROLE_VISUALIZADOR`. VISUALIZADOR só faz GET.
+- **Sessão única:** coluna `token_ativo` — só o último token emitido vale (checado no `SecurityFilter`). Login com sessão ativa → `409`; reenviar com `?force=true`.
+- **Lockout:** 5 tentativas falhas → `conta_bloqueada_ate` = +30min (`403`). Registra `data_ultimo_login` e `ultimo_ip`.
+- **Endpoints** `POST/GET /api/auth`: `login` (`?force`), `register`, `logout`, `validate`.
+- `SecurityConfigurations` stateless + CORS (`localhost:3000`) + `SecurityFilter` (OncePerRequest). `AuthorizationService` (UserDetailsService). `AdminUserSeeder` cria admin inicial (`app.admin.*`).
+- **Segredo:** `JWT_SECRET` (prop `api.security.token.secret`). Migração `V2__auth_usuario.sql`.
+
+### Front-end (`src/services/auth.js`, `api.js`; `src/componentes/login/Login.jsx`)
+- Token em **cookie** `revisional_token` — **melhorado vs. sigapsi**: `SameSite=Strict` + `Secure` (em https) e `Max-Age` derivado do `exp` do JWT.
+- **Validação client-side de expiração** (`isTokenValid`): logout proativo sem esperar o `401` do servidor. `isAuthenticated()` limpa token expirado.
+- Helpers de papel a partir do payload: `isAdmin`, `isAuditor`, `isVisualizador`, `getNomeCompleto`.
+- Tela de login trata `409` (diálogo SweetAlert → reenvia com `force`). Rotas protegidas em `App.js` (`RotaProtegida`/`RotaPublica`/`RotaAdmin`); `MainLayout` (AppBar + drawer + logout); `Dashboard` é a home.
 
 ## 📖 Glossário (usar em PT no código)
 
