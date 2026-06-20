@@ -14,6 +14,7 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { loginUsuario } from '../../services/api';
 import { setSessionToken } from '../../services/auth';
 import { toastSuccess, toastError, alertValidacao, confirmAcao } from '../../services/alerts';
+import { formatCpf, isValidCpf, looksLikeCpf, onlyDigits } from '../../services/cpf';
 
 const Login = () => {
     const navigate = useNavigate();
@@ -26,6 +27,12 @@ const Login = () => {
         setCredentials({ ...credentials, [prop]: event.target.value });
     };
 
+    // Login aceita email/cpf/oab. Se o valor for numérico, aplica máscara de CPF.
+    const handleLoginChange = (event) => {
+        const raw = event.target.value;
+        setCredentials({ ...credentials, login: looksLikeCpf(raw) ? formatCpf(raw) : raw });
+    };
+
     const handleLogin = async (event, force = false) => {
         if (event) event.preventDefault();
 
@@ -34,10 +41,21 @@ const Login = () => {
             return;
         }
 
+        // Se for CPF (numérico), valida e envia só os dígitos; email/oab vão como digitados
+        let loginToSend = credentials.login.trim();
+        if (looksLikeCpf(credentials.login)) {
+            const digits = onlyDigits(credentials.login);
+            if (digits.length === 11 && !isValidCpf(digits)) {
+                alertValidacao('CPF inválido. Verifique os dígitos.');
+                return;
+            }
+            loginToSend = digits;
+        }
+
         setLoading(true);
         try {
             const data = await loginUsuario(
-                { login: credentials.login, senha: credentials.senha },
+                { login: loginToSend, senha: credentials.senha },
                 force
             );
 
@@ -144,7 +162,7 @@ const Login = () => {
                             name="login"
                             autoFocus
                             value={credentials.login}
-                            onChange={handleChange('login')}
+                            onChange={handleLoginChange}
                             disabled={loading}
                         />
                         <TextField

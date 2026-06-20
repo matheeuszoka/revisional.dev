@@ -9,6 +9,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 import { getCaso, criarCaso, atualizarCaso } from '../../services/casos';
 import { toastSuccess, alertValidacao } from '../../services/alerts';
+import { formatCpf, isValidCpf, onlyDigits } from '../../services/cpf';
 
 const MODALIDADES = [
     'Financiamento de veículos - Pessoa Física',
@@ -48,7 +49,9 @@ export default function CasoForm() {
             try {
                 const caso = await getCaso(id);
                 setTitulo(caso.titulo || '');
-                setContrato({ ...contratoVazio, ...(caso.contrato || {}) });
+                const c = { ...contratoVazio, ...(caso.contrato || {}) };
+                c.clienteCpf = formatCpf(c.clienteCpf);
+                setContrato(c);
             } finally {
                 setLoading(false);
             }
@@ -56,6 +59,7 @@ export default function CasoForm() {
     }, [id, editando]);
 
     const set = (campo) => (e) => setContrato({ ...contrato, [campo]: e.target.value });
+    const setCpf = (e) => setContrato({ ...contrato, clienteCpf: formatCpf(e.target.value) });
 
     // Converte "" -> null e strings numéricas -> Number nos campos de valor
     const montarContrato = () => {
@@ -65,12 +69,17 @@ export default function CasoForm() {
             if (numericos.includes(k)) out[k] = v === '' || v === null ? null : Number(v);
             else out[k] = v;
         });
+        out.clienteCpf = onlyDigits(contrato.clienteCpf); // armazena só dígitos
         return out;
     };
 
     const handleSalvar = async () => {
         if (!titulo.trim()) {
             alertValidacao('Informe um título para o caso.');
+            return;
+        }
+        if (contrato.clienteCpf && !isValidCpf(contrato.clienteCpf)) {
+            alertValidacao('CPF do cliente inválido. Verifique os dígitos.');
             return;
         }
         setSalvando(true);
@@ -112,7 +121,7 @@ export default function CasoForm() {
                 <SectionTitle>Cliente</SectionTitle>
                 <Grid container spacing={2}>
                     <Grid size={{ xs: 12, sm: 8 }}><TextField label="Nome do cliente" fullWidth value={contrato.clienteNome} onChange={set('clienteNome')} /></Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}><TextField label="CPF do cliente" fullWidth value={contrato.clienteCpf} onChange={set('clienteCpf')} /></Grid>
+                    <Grid size={{ xs: 12, sm: 4 }}><TextField label="CPF do cliente" fullWidth value={contrato.clienteCpf} onChange={setCpf} inputProps={{ inputMode: 'numeric', maxLength: 14 }} /></Grid>
                 </Grid>
 
                 <SectionTitle>Contrato</SectionTitle>
