@@ -7,6 +7,8 @@ import theme from './theme';
 import MainLayout from './componentes/MainLayout';
 import LoginPage from './componentes/login/Login';
 import Dashboard from './componentes/Dashboard';
+import Casos from './componentes/casos/Casos';
+import CasoForm from './componentes/casos/CasoForm';
 import { isAuthenticated, isAdmin } from './services/auth';
 
 const RotaProtegida = ({ children }) => {
@@ -43,7 +45,9 @@ function App() {
                     <Route path="/" element={<RotaProtegida><MainLayout /></RotaProtegida>}>
                         <Route index element={<Navigate to="/dashboard" replace />} />
                         <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/casos" element={<EmBreve title="Casos Revisionais" />} />
+                        <Route path="/casos" element={<Casos />} />
+                        <Route path="/casos/novo" element={<CasoForm />} />
+                        <Route path="/casos/:id" element={<CasoForm />} />
                         <Route path="/usuarios" element={<RotaAdmin><EmBreve title="Usuários" /></RotaAdmin>} />
                     </Route>
 
