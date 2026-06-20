@@ -1,68 +1,102 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-    Box, Grid, Card, CardContent, Typography, Avatar, Stack, Paper, Chip
+    Box, Typography, Paper, Grid, Button, useTheme, useMediaQuery
 } from '@mui/material';
-import FolderSpecialIcon from '@mui/icons-material/FolderSpecial';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import DescriptionIcon from '@mui/icons-material/Description';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import FolderSpecialOutlinedIcon from '@mui/icons-material/FolderSpecialOutlined';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
+import TrendingUpOutlinedIcon from '@mui/icons-material/TrendingUpOutlined';
+import AddIcon from '@mui/icons-material/Add';
 
-import { getNomeCompleto, getUserRole } from '../services/auth';
+import KpiCard from './dashboard/KpiCard';
+import { getNomeCompleto } from '../services/auth';
 
-const cards = [
-    { label: 'Casos em aberto', value: '—', icon: <FolderSpecialIcon />, color: '#1565C0' },
-    { label: 'Laudos gerados', value: '—', icon: <DescriptionIcon />, color: '#2E7D32' },
-    { label: 'Indícios fortes', value: '—', icon: <WarningAmberIcon />, color: '#C62828' },
-    { label: 'Spread médio', value: '—', icon: <TrendingUpIcon />, color: '#ED6C02' },
-];
+const PRIMARY = '#1565C0';
 
-const Dashboard = () => {
-    const nome = getNomeCompleto() || 'Usuário';
-    const role = (getUserRole() || '').replace('ROLE_', '');
+const SectionTitle = ({ children }) => (
+    <Typography variant="h6" component="h2" sx={{ color: PRIMARY, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <Box aria-hidden="true" sx={{ width: 4, height: 22, bgcolor: PRIMARY, borderRadius: 1 }} />
+        {children}
+    </Typography>
+);
 
-    return (
-        <Box>
-            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                <Box>
-                    <Typography variant="h4" fontWeight="bold" color="secondary.main">
-                        Olá, {nome.split(' ')[0]} 👋
-                    </Typography>
-                    <Typography variant="body1" color="text.secondary">
-                        Painel do Sistema Revisional Bancário · MPG SISTEMAS
-                    </Typography>
-                </Box>
-                {role && <Chip label={role} color="primary" variant="outlined" />}
-            </Stack>
-
-            <Grid container spacing={3}>
-                {cards.map((c) => (
-                    <Grid key={c.label} size={{ xs: 12, sm: 6, md: 3 }}>
-                        <Card>
-                            <CardContent>
-                                <Stack direction="row" spacing={2} alignItems="center">
-                                    <Avatar sx={{ bgcolor: c.color, width: 48, height: 48 }}>{c.icon}</Avatar>
-                                    <Box>
-                                        <Typography variant="h5" fontWeight="bold">{c.value}</Typography>
-                                        <Typography variant="body2" color="text.secondary">{c.label}</Typography>
-                                    </Box>
-                                </Stack>
-                            </CardContent>
-                        </Card>
-                    </Grid>
-                ))}
-            </Grid>
-
-            <Paper sx={{ mt: 4, p: 4, textAlign: 'center' }}>
-                <Typography variant="h6" color="text.secondary" gutterBottom>
-                    Bem-vindo ao Revisional
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                    Cadastre um caso revisional para iniciar a auditoria: extração de dados do contrato,
-                    engenharia reversa das taxas e comparação com o Banco Central.
-                </Typography>
-            </Paper>
-        </Box>
-    );
+const dataHoje = () => {
+    const d = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return d.charAt(0).toUpperCase() + d.slice(1);
 };
 
-export default Dashboard;
+export default function Dashboard() {
+    const theme = useTheme();
+    const navigate = useNavigate();
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    const primeiroNome = (getNomeCompleto() || 'Usuário').split(' ')[0];
+
+    return (
+        <Box sx={{ flexGrow: 1 }}>
+            {/* HEADER */}
+            <Box component="header" sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, flexWrap: 'wrap', gap: 2 }}>
+                <Box>
+                    <Typography variant={isMobile ? 'h5' : 'h4'} component="h1" fontWeight="bold" color="#333">
+                        Olá, {primeiroNome} 👋
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                        {dataHoje()}
+                    </Typography>
+                </Box>
+                <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/casos')}>
+                    Novo Caso
+                </Button>
+            </Box>
+
+            {/* KPIs */}
+            <Grid container spacing={{ xs: 2, sm: 3 }} alignItems="stretch" sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <KpiCard title="Casos em aberto" value="—" subtitle="Aguardando auditoria"
+                        icon={<FolderSpecialOutlinedIcon />} onClick={() => navigate('/casos')} />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <KpiCard title="Laudos gerados" value="—" subtitle="No total"
+                        icon={<DescriptionOutlinedIcon />} accent="#2E7D32" />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <KpiCard title="Indícios fortes" value="—" subtitle="Spread ≥ 2.0×"
+                        icon={<WarningAmberOutlinedIcon />} accent="#C62828" valueColor="#C62828" />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                    <KpiCard title="Spread médio" value="—" subtitle="Banco vs. mercado"
+                        icon={<TrendingUpOutlinedIcon />} accent="#ED6C02" />
+                </Grid>
+            </Grid>
+
+            {/* SEÇÕES */}
+            <Grid container spacing={{ xs: 2, sm: 3 }} alignItems="stretch">
+                <Grid size={{ xs: 12, md: 7 }}>
+                    <Paper elevation={0} sx={{ p: 3, boxShadow: '0 2px 10px rgba(0,0,0,0.05)', height: '100%' }}>
+                        <SectionTitle>Casos Recentes</SectionTitle>
+                        <Box sx={{ py: 6, textAlign: 'center' }}>
+                            <FolderSpecialOutlinedIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+                            <Typography color="text.secondary" gutterBottom>Nenhum caso cadastrado ainda.</Typography>
+                            <Button variant="outlined" startIcon={<AddIcon />} sx={{ mt: 1 }} onClick={() => navigate('/casos')}>
+                                Cadastrar primeiro caso
+                            </Button>
+                        </Box>
+                    </Paper>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 5 }}>
+                    <Paper elevation={0} sx={{ p: 3, boxShadow: '0 2px 10px rgba(0,0,0,0.05)', height: '100%' }}>
+                        <SectionTitle>Como funciona</SectionTitle>
+                        <Box component="ol" sx={{ pl: 2.5, m: 0, color: 'text.secondary', '& li': { mb: 1.5 } }}>
+                            <li><b>Cadastre o caso</b> e anexe o contrato de financiamento.</li>
+                            <li><b>Extração</b> dos dados via OCR.</li>
+                            <li><b>Engenharia reversa</b> das taxas ocultas (bisseção/CET).</li>
+                            <li><b>Comparação</b> com o Banco Central (SGS 25471).</li>
+                            <li><b>Laudo</b> técnico-jurídico em PDF.</li>
+                        </Box>
+                    </Paper>
+                </Grid>
+            </Grid>
+        </Box>
+    );
+}
