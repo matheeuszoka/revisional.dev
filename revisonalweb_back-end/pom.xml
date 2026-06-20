@@ -30,7 +30,7 @@
     <properties>
         <java.version>17</java.version>
         <!-- Versões não gerenciadas pelo Spring Boot BOM -->
-        <jjwt.version>0.12.6</jjwt.version>
+        <javajwt.version>4.4.0</javajwt.version>
         <pdfbox.version>3.0.5</pdfbox.version>
         <openpdf.version>2.0.3</openpdf.version>
         <tess4j.version>5.16.0</tess4j.version>
@@ -90,21 +90,9 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>${jjwt.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
+            <groupId>com.auth0</groupId>
+            <artifactId>java-jwt</artifactId>
+            <version>${javajwt.version}</version>
         </dependency>
 
         <!-- Bean Validation (jakarta.validation) -->
