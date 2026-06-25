@@ -9,6 +9,8 @@ import LoginPage from './componentes/login/Login';
 import Dashboard from './componentes/Dashboard';
 import Casos from './componentes/casos/Casos';
 import CasoForm from './componentes/casos/CasoForm';
+import Normas from './componentes/normas/Normas';
+import Parametros from './componentes/config/Parametros';
 import { isAuthenticated, isAdmin } from './services/auth';
 
 const RotaProtegida = ({ children }) => {
@@ -48,7 +50,9 @@ function App() {
                         <Route path="/casos" element={<Casos />} />
                         <Route path="/casos/novo" element={<CasoForm />} />
                         <Route path="/casos/:id" element={<CasoForm />} />
+                        <Route path="/normas" element={<Normas />} />
                         <Route path="/usuarios" element={<RotaAdmin><EmBreve title="Usuários" /></RotaAdmin>} />
+                        <Route path="/parametros" element={<RotaAdmin><Parametros /></RotaAdmin>} />
                     </Route>
 
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />

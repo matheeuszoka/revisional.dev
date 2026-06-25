@@ -5,6 +5,7 @@ import br.com.mpgsistemas.revisionalweb.api.dto.ResultadoCalculo;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
@@ -21,6 +22,12 @@ public class CasoRevisional {
     private Long id_caso_revisional;
 
     private String titulo;
+
+    // MULTI-TENANCY: discriminator. Hibernate preenche no insert e filtra todo
+    // SELECT/UPDATE/DELETE por este valor automaticamente. Não setar na mão.
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     @Column(updatable = false)
     private LocalDateTime criadoEm;

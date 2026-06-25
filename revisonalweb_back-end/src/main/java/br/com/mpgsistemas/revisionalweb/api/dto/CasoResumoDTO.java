@@ -12,10 +12,12 @@ public record CasoResumoDTO(
         String instituicao,
         LocalDateTime criadoEm,
         LocalDateTime atualizadoEm,
-        boolean temResultado
+        boolean temResultado,
+        String classificacaoRisco
 ) {
     public static CasoResumoDTO from(CasoRevisional c) {
         var contrato = c.getContrato();
+        var resultado = c.getResultado();
         return new CasoResumoDTO(
                 c.getId_caso_revisional(),
                 c.getTitulo(),
@@ -23,7 +25,8 @@ public record CasoResumoDTO(
                 contrato != null ? contrato.getInstituicao() : null,
                 c.getCriadoEm(),
                 c.getAtualizadoEm(),
-                c.getResultado() != null
+                resultado != null,
+                resultado != null ? resultado.getClassificacaoRisco() : null
         );
     }
 }

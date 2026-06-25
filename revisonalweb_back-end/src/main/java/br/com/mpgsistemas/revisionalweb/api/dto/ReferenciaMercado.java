@@ -12,5 +12,7 @@ public class ReferenciaMercado {
     private Double taxaMensalPct;
     private Double taxaAnualPct;
     private Double taxaMensalInstituicaoPct;
+    private Double taxaAnualInstituicaoPct;
+    private String url;
     private String observacao;
 }

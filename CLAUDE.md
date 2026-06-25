@@ -1,4 +1,4 @@
-    aude# CLAUDE.md
+# CLAUDE.md
 
 Diretrizes arquiteturais, regras de negócio e stack para o Claude Code (ou qualquer IA) trabalhar neste repositório. Baseado em `contexto.md` (visão de produto) e ajustado ao estado real do código.
 
@@ -13,10 +13,13 @@ Automatiza auditoria de contratos de financiamento bancário (foco veículos PF)
 - **Java 17 (LTS)**, **Spring Boot 4.1.0**, empacotamento **WAR** (Tomcat externo).
 - Spring Boot starters: `webmvc`, `data-jpa`, `actuator`, `devtools`.
 - **Lombok** (getters/setters/builders).
-- **PostgreSQL** (driver `postgresql`).
+- **PostgreSQL** (driver `postgresql`), **Flyway** (migrações `V1..V4`).
+- **Spring Security + `com.auth0:java-jwt`** (auth JWT stateless).
+- **PDFBox 3.0.5** (extração texto PDF) + **Tess4J 5.16** (OCR Tesseract) + **OpenPDF 2.0.3** (geração de laudos PDF, pacote `com.lowagie.text`).
+- **MinIO** (armazenamento de documentos anexados).
 - Build: **Maven** (wrapper `mvnw` na raiz do back-end).
 
-> ⚠️ Divergência com `contexto.md`: o documento de visão cita Spring Boot 3.3.x, Flyway, Spring Security/JWT, PDFBox/Tess4J/OpenPDF, Testcontainers, RestClient. **Ainda não estão no `pom.xml`.** Tratar como roadmap, não como dependências instaladas. Confirmar antes de assumir que existem.
+> ⚠️ Divergência com `contexto.md`: cita Spring Boot 3.3.x, Testcontainers, RestClient — **estes** ainda não instalados. Flyway/Security/JWT/PDFBox/Tess4J/OpenPDF **já estão** no `pom.xml` e em uso.
 
 ## 📁 Estrutura real do repositório
 
@@ -26,18 +29,30 @@ revisional.dev/
 │   ├── pom.xml
 │   ├── mvnw / mvnw.cmd
 │   └── src/main/java/br/com/mpgsistemas/revisionalweb/api/
-│       ├── RevisonalwebBackEndApplication.java
-│       ├── ServletInitializer.java
-│       ├── dto/      → ReferenciaMercado, ResultadoCalculo
-│       └── model/    → Usuario, CasoRevisional, DadosContrato, UploadDocumento,
-│                       EventoAuditoria, ParametrosSistema, CampoExtraido
+│       ├── RevisonalwebBackEndApplication.java / ServletInitializer.java
+│       ├── controller/ → CasoRevisional, Authentication, Configuracao, Normas
+│       ├── service/    → CalculadoraFinanceira, Bcb, Extractor, ExtracaoIa, ParserRegex,
+│       │                 Auditoria, Relatorio, Armazenamento, Configuracao, Criptografia
+│       ├── repository/ → Usuario, CasoRevisional, UploadDocumento, EventoAuditoria,
+│       │                 Tenant, ConfiguracaoSistema
+│       ├── security/   → SecurityConfigurations, SecurityFilter, TokenService, TenantContext
+│       ├── config/     → AdminUserSeeder, MatrizNormativa, TenantIdentifierResolver, MinioConfig
+│       ├── util/       → FormatoBr (formatação pt-BR p/ PDF)
+│       ├── dto/        → ReferenciaMercado, ResultadoCalculo, LinhaPrice, AuditPackage,
+│       │                 AuditItem, FonteNormativa, Caso*/Configuracao* DTOs
+│       └── model/      → Usuario, Tenant, CasoRevisional, DadosContrato, UploadDocumento,
+│                         EventoAuditoria, ParametrosSistema, CampoExtraido, ConfiguracaoSistema
+│   └── src/main/resources/db/migration/ → V1..V4 (V4 = multi-tenancy)
 └── revisional_front-end/         # React SPA (Create React App)
     ├── package.json
-    └── src/ (App.js, index.js, ...)
+    └── src/
+        ├── componentes/ → casos/CasoForm, casos/Casos, normas/Normas, config/Parametros,
+        │                   login/Login, Dashboard, MainLayout
+        └── services/    → api, auth, casos, normas, configuracoes, alerts, cpf, moeda
 ```
 
 - **Pacote base real:** `br.com.mpgsistemas.revisionalweb.api` (o `contexto.md` cita `br.com.revisional` — usar o real).
-- Camadas `controller/`, `service/`, `repository/`, `config/`, `security/` ainda **não existem** — criar conforme a Clean Architecture abaixo quando necessário.
+- Camadas Clean Architecture (`controller/`, `service/`, `repository/`, `config/`, `security/`, `util/`) **já existem**.
 - Diretórios `docker/` e GitHub Actions (`deploy.yml`) ainda não existem.
 
 ## 🚀 Comandos
@@ -128,8 +143,13 @@ jobs:
 5. **Score de risco (Spread):** `R = taxa_contrato / taxa_mercado`. `R ≥ 2.0` indício forte; `R ≥ 1.50` indício moderado.
 
 ### Modelagem de dados
-- **Relacional:** `Usuario` (1:N) `CasoRevisional`; `CasoRevisional` (1:N) `UploadDocumento` e `EventoAuditoria`.
-- **JSONB:** DTOs complexos (`DadosContrato`, `ResultadoCalculo`) serializados com `@JdbcTypeCode(SqlTypes.JSON)` na tabela `cases` — evita explosão de tabelas.
+- **Relacional:** `Tenant` (1:N) `Usuario` (1:N) `CasoRevisional`; `CasoRevisional` (1:N) `UploadDocumento` e `EventoAuditoria`.
+- **JSONB:** DTOs complexos (`DadosContrato`, `ResultadoCalculo`, `ReferenciaMercado`) serializados com `@JdbcTypeCode(SqlTypes.JSON)` na tabela do caso — evita explosão de tabelas.
+
+### Multi-tenancy (discriminator)
+- Tenant = **escritório/empresa**. Isolamento por coluna `tenant_id` via Hibernate `@TenantId` em `CasoRevisional`, `UploadDocumento`, `EventoAuditoria` → Hibernate filtra todo SELECT/UPDATE/DELETE e preenche INSERT **automaticamente**. Migração `V4__multi_tenancy.sql`.
+- `Usuario` referencia `Tenant` (FK), mas **sem** `@TenantId` de propósito: login é cross-tenant (acha por cpf/email/oab global, só então resolve o tenant).
+- JWT carrega claim `tenant_id`. `SecurityFilter` seta/limpa `TenantContext` (ThreadLocal) por requisição; `TenantIdentifierResolver` alimenta o Hibernate. Register self-signup: escritório novo cria `Tenant` e 1º usuário vira `ROLE_ADMIN`.
 
 ## 💻 Arquitetura Front-end
 
@@ -175,6 +195,34 @@ JWT stateless com Spring Security. Espelha o sigapsi e melhora o controle de ses
 3. **Isolamento:** Service recebe DTO, aplica fórmulas, retorna DTO. Não conhece banco nem HTTP.
 4. **LGPD nos logs:** nunca logar `cliente_cpf` nem valores financeiros reais em exceções.
 5. **Frontend estético:** componentes só com MUI v7; respostas de API (sucesso/falha) via SweetAlert.
+
+## 🎯 Paridade com o protótipo Python (`revisional_bancaria_web_v2_0_0`)
+
+O protótipo Flask/Python `v2.0.0` foi a **referência funcional completa**. A paridade está **fechada** — o Java/React iguala ou supera o protótipo. Ao evoluir, manter os textos de premissas/conclusões/normas espelhando o protótipo.
+
+### ✅ Portado (paridade completa)
+- **Motor financeiro** (`financial.py` → `CalculadoraFinanceiraService`): PRICE, bisseção (apurar taxa), CET/XIRR por fluxo em dias corridos, spread, classificação de risco, tabela PRICE, memória de cálculo. Determinístico para perícia.
+- **Integração BCB** (`bcb.py` → `BcbService`): série SGS 25471, parse decimal BR, conversão mensal↔anual.
+- **Extração OCR/PDF** (`extractor.py` → `ExtractorService` + `ExtracaoIaService` + `ParserRegexService` + `MapeadorContrato`): PDFBox (texto) + Tess4J (OCR) + IA OpenRouter; campos com confiança (`CampoExtraido`), merge "só vazios". Endpoint `POST /api/casos/{id}/upload` grava `UploadDocumento` no MinIO + hashes SHA-256.
+- **Auditoria** (`audit.py` → `AuditoriaService`): `AuditPackage` com score (0–100), `calculationFingerprint` (Jackson chaves ordenadas → determinístico), `inputSnapshotHash`, matriz `AuditItem` (DOC/CAD/FIN/MKT/CET/TAR/JUR/INC/EXT + severidade), warnings. Evento `ANALYSIS_RUN`. Endpoint `GET /api/casos/{id}/auditoria`.
+- **Matriz normativa** (`norms.py` → `MatrizNormativa` + `FonteNormativa`): leis/súmulas (Res. CMN 4.881/2020, 3.919/2010, Lei 10.931/2004, CDC, Decreto 6.306/2007, STJ Súmulas 530/382, DL 911/1969). `GET /api/normas` + tela `/normas`. Embutida nos PDFs.
+- **Relatórios PDF** (`reports.py` → `RelatorioService`, OpenPDF): 4 laudos — **parecer técnico-jurídico**, **gerencial executivo**, **notificação extrajudicial**, **elementos para inicial** — com capa, tabelas contrato/cálculo, matriz normativa e trilha de auditoria. `GET /api/casos/{id}/relatorio/{tipo}` (inline). Formatação pt-BR em `util/FormatoBr`.
+- **Pacote ZIP** (`generate_bundle` → `RelatorioService.gerarPacote`): 4 PDFs + `auditoria.json`. `GET /api/casos/{id}/pacote`. Evento `BUNDLE_GENERATE`.
+- **Trilha de auditoria** (`audit_events` → `EventoAuditoria`): eventos semânticos (`ANALYSIS_RUN`, `REPORT_GENERATE`, `BUNDLE_GENERATE`, `DOCUMENT_UPLOAD_*`, etc.).
+- **Autenticação** (`security.py` → Spring Security + JWT): **superior** ao protótipo (JWT stateless, roles, sessão única, lockout) vs. sessão Flask + PBKDF2.
+- **Front-end completo**: `CasoForm` com form de contrato integral (todos os campos `DadosContrato`), conferência OCR (confiança por campo), análise com referência de mercado manual completa, render de premissas + memória de cálculo + tabela PRICE, painel de auditoria (score + matriz), botões dos 4 laudos + ZIP via `Blob`/`<iframe>`. Tela `/normas`.
+
+### ⭐ Além do protótipo (Java não tem equivalente Flask)
+- **Multi-tenancy** (discriminator `@TenantId`) — ver seção acima.
+- **Configuração via tela admin** (`ConfiguracaoSistema`, `ConfiguracaoService`, `/parametros`): OCR/IA editáveis; chave OpenRouter cifrada (AES-GCM). Migração `V3`.
+
+> ⚠️ Manter as regras de código (null safety de OCR, sem números mágicos → `ParametrosSistema`, Service isolado de banco/HTTP, LGPD nos logs).
+
+### 🔭 Roadmap aberto
+- `docker/`, Dockerfiles, `deploy.yml` (espelhar `sigapsi.dev`).
+- Endpoint dedicado de download `audit.json` (hoje só dentro do ZIP).
+- Testes automatizados (Testcontainers ainda não no `pom.xml`).
+- Tela de gestão de usuários/membros do tenant (`/usuarios` é placeholder "Em breve").
 
 ## 🔐 Variáveis de Ambiente (`.env`)
 

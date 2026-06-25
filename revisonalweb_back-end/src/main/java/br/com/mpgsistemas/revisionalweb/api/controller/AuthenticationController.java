@@ -3,8 +3,10 @@ package br.com.mpgsistemas.revisionalweb.api.controller;
 import br.com.mpgsistemas.revisionalweb.api.dto.AuthenticationDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.LoginResponseDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.RegisterDTO;
+import br.com.mpgsistemas.revisionalweb.api.model.Tenant;
 import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
 import br.com.mpgsistemas.revisionalweb.api.model.UsuarioRole;
+import br.com.mpgsistemas.revisionalweb.api.repository.TenantRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.UsuarioRepository;
 import br.com.mpgsistemas.revisionalweb.api.security.TokenService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,6 +34,9 @@ public class AuthenticationController {
 
     @Autowired
     private UsuarioRepository repository;
+
+    @Autowired
+    private TenantRepository tenantRepository;
 
     @Autowired
     private TokenService tokenService;
@@ -100,6 +105,27 @@ public class AuthenticationController {
         if (data.oab() != null && repository.existsByOab(data.oab())) {
             return ResponseEntity.badRequest().body("OAB já cadastrada.");
         }
+        if (data.nomeEscritorio() == null || data.nomeEscritorio().isBlank()) {
+            return ResponseEntity.badRequest().body("Informe o escritório/empresa.");
+        }
+
+        // Multi-tenancy: resolve o tenant pelo nome. Novo escritório => cria tenant e
+        // o primeiro usuário vira ADMIN dele. Escritório existente => anexa como AUDITOR.
+        Tenant tenant = tenantRepository.findByNomeIgnoreCase(data.nomeEscritorio().trim());
+        boolean tenantNovo = tenant == null;
+        UsuarioRole role;
+        if (tenantNovo) {
+            tenant = new Tenant();
+            tenant.setNome(data.nomeEscritorio().trim());
+            if (data.cnpjEscritorio() != null && !data.cnpjEscritorio().isBlank()) {
+                tenant.setCnpj(data.cnpjEscritorio().replaceAll("\\D", ""));
+            }
+            tenant.setAtivo(true);
+            tenant = tenantRepository.save(tenant);
+            role = UsuarioRole.ROLE_ADMIN; // dono do escritório
+        } else {
+            role = data.role() != null ? data.role() : UsuarioRole.ROLE_AUDITOR;
+        }
 
         Usuario novo = new Usuario();
         novo.setNomeCompleto(data.nomeCompleto());
@@ -107,7 +133,8 @@ public class AuthenticationController {
         novo.setCpf(data.cpf());
         novo.setOab(data.oab());
         novo.setSenha(passwordEncoder.encode(data.senha()));
-        novo.setUsuarioRole(data.role() != null ? data.role() : UsuarioRole.ROLE_AUDITOR);
+        novo.setUsuarioRole(role);
+        novo.setTenant(tenant);
         novo.setAtivo(true);
 
         repository.save(novo);

@@ -32,6 +32,7 @@ public class TokenService {
                     .withClaim("oab", usuario.getOab())
                     .withClaim("role", usuario.getUsuarioRole() != null ? usuario.getUsuarioRole().toString() : null)
                     .withClaim("id_usuario", usuario.getId_usuario())
+                    .withClaim("tenant_id", usuario.getTenantId())
                     .withExpiresAt(genExpirationDate())
                     .sign(algorithm);
         } catch (JWTCreationException exception) {

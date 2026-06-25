@@ -13,8 +13,10 @@ import Logout from '@mui/icons-material/Logout';
 import GavelIcon from '@mui/icons-material/Gavel';
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined';
 import FolderSpecialOutlinedIcon from '@mui/icons-material/FolderSpecialOutlined';
+import GavelOutlinedIcon from '@mui/icons-material/GavelOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import PersonOutlinedIcon from '@mui/icons-material/PersonOutlined';
+import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 
 import { logoutUsuario } from '../services/api';
 import { removeSessionToken, getNomeCompleto, getUserRole, isAdmin } from '../services/auth';
@@ -37,16 +39,20 @@ export default function MainLayout() {
     const initial = nome.charAt(0).toUpperCase();
 
     const configMenuItems = isAdmin()
-        ? [{ text: 'Usuários do Sistema', icon: <PersonOutlinedIcon />, path: '/usuarios' }]
+        ? [
+            { text: 'Usuários do Sistema', icon: <PersonOutlinedIcon />, path: '/usuarios' },
+            { text: 'Parâmetros', icon: <TuneOutlinedIcon />, path: '/parametros' },
+        ]
         : [];
 
     const [openConfig, setOpenConfig] = React.useState(
-        ['/usuarios'].some((p) => location.pathname.startsWith(p))
+        ['/usuarios', '/parametros'].some((p) => location.pathname.startsWith(p))
     );
 
     const mainMenuItems = [
         { text: 'Visão Geral', icon: <DashboardOutlinedIcon />, path: '/dashboard' },
         { text: 'Casos Revisionais', icon: <FolderSpecialOutlinedIcon />, path: '/casos' },
+        { text: 'Matriz Normativa', icon: <GavelOutlinedIcon />, path: '/normas' },
     ];
 
     const getPageTitle = () => {

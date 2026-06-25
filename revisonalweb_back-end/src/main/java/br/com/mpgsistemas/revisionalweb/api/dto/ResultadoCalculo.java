@@ -13,11 +13,17 @@ public class ResultadoCalculo {
 
     private String status = "Pendente";
     private Double taxaMensalContratoApuradaPct;
+    private Double taxaAnualContratoApuradaPct;
     private Double taxaMensalMercadoPct;
+    private Double taxaAnualMercadoPct;
+    private Double spreadPontosPercentuaisMes;
     private Double spreadPercentualSobreMercado;
+    private Double parcelaContratual;
     private Double parcelaRecalculadaMercado;
     private Double diferencaMensal;
     private Double diferencaTotalNominal;
+    private Double totalContratado;
+    private Double totalRecalculado;
     private Double cetAnualApuradoPct;
     private String classificacaoRisco = "Não avaliado";
     private String conclusaoTecnica = "";

@@ -29,19 +29,26 @@ public class SecurityFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         var token = this.recoverToken(request);
 
-        if (token != null) {
-            var cpf = tokenService.validateToken(token);
-            if (StringUtils.hasText(cpf)) {
-                Usuario usuario = usuarioRepository.findByCpf(cpf);
-                // Só autentica se o token for o token ativo (sessão única)
-                if (usuario != null && token.equals(usuario.getTokenAtivo())) {
-                    var authentication = new UsernamePasswordAuthenticationToken(
-                            usuario, null, usuario.getAuthorities());
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
+        try {
+            if (token != null) {
+                var cpf = tokenService.validateToken(token);
+                if (StringUtils.hasText(cpf)) {
+                    Usuario usuario = usuarioRepository.findByCpf(cpf);
+                    // Só autentica se o token for o token ativo (sessão única)
+                    if (usuario != null && token.equals(usuario.getTokenAtivo())) {
+                        var authentication = new UsernamePasswordAuthenticationToken(
+                                usuario, null, usuario.getAuthorities());
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                        // MULTI-TENANCY: a partir daqui o Hibernate filtra os dados do tenant.
+                        TenantContext.set(usuario.getTenantId());
+                    }
                 }
             }
+            filterChain.doFilter(request, response);
+        } finally {
+            // Evita vazar tenant para a próxima requisição que reaproveitar a thread.
+            TenantContext.clear();
         }
-        filterChain.doFilter(request, response);
     }
 
     private String recoverToken(HttpServletRequest request) {

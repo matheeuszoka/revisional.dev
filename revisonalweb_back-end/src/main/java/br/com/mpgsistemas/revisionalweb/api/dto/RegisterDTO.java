@@ -8,6 +8,10 @@ public record RegisterDTO(
         String cpf,
         String oab,
         String senha,
-        UsuarioRole role
+        UsuarioRole role,
+        // Multi-tenancy: nome do escritório/empresa. Auto-signup cria o tenant e o
+        // primeiro usuário vira ADMIN dele. Se o tenant já existir, anexa a ele.
+        String nomeEscritorio,
+        String cnpjEscritorio
 ) {
 }

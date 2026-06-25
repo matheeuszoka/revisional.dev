@@ -2,6 +2,7 @@ package br.com.mpgsistemas.revisionalweb.api.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.TenantId;
 
 import java.time.LocalDateTime;
 
@@ -14,6 +15,11 @@ public class EventoAuditoria {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id_evento_auditoria")
     private Long id_evento_auditoria;
+
+    // MULTI-TENANCY: discriminator (preenchido/filtrado pelo Hibernate).
+    @TenantId
+    @Column(name = "tenant_id", nullable = false, updatable = false)
+    private Long tenantId;
 
     @Column(length = 11)
     private String cpfUsuarioLogado;

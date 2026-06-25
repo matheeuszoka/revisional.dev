@@ -44,6 +44,13 @@ public class Usuario implements UserDetails {
     @Column(name = "usuario_role")
     private UsuarioRole usuarioRole;
 
+    // MULTI-TENANCY: N Usuários pertencem a 1 Tenant (escritório). NÃO usa @TenantId
+    // de propósito: o login é cross-tenant (acha o usuário por cpf/email/oab global),
+    // e só então o tenant é resolvido a partir deste vínculo.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id", nullable = false)
+    private Tenant tenant;
+
     // --- Segurança e auditoria (padrão sigapsi) ---
     @CreationTimestamp
     @Column(name = "data_criacao", updatable = false)
@@ -71,6 +78,11 @@ public class Usuario implements UserDetails {
     // MULTIPLICIDADE: 1 Usuário tem N Casos (One-to-Many)
     @OneToMany(mappedBy = "auditor", cascade = CascadeType.ALL)
     private List<CasoRevisional> casos;
+
+    /** Id do tenant (escritório) do usuário, ou null se ainda não vinculado. */
+    public Long getTenantId() {
+        return tenant != null ? tenant.getId() : null;
+    }
 
     // --- UserDetails ---
 
