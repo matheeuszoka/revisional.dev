@@ -17,9 +17,10 @@ import GavelOutlinedIcon from '@mui/icons-material/GavelOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
 import PersonOutlinedIcon from '@mui/icons-material/PersonOutlined';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
+import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined';
 
 import { logoutUsuario } from '../services/api';
-import { removeSessionToken, getNomeCompleto, getUserRole, isAdmin } from '../services/auth';
+import { removeSessionToken, getNomeCompleto, getUserRole, isAdmin, isSuperAdmin } from '../services/auth';
 import { confirmAcao, toastSuccess } from '../services/alerts';
 
 const drawerWidth = 240;
@@ -40,13 +41,15 @@ export default function MainLayout() {
 
     const configMenuItems = isAdmin()
         ? [
+            // Só a plataforma (SUPER_ADMIN) enxerga todos os escritórios
+            ...(isSuperAdmin() ? [{ text: 'Escritórios', icon: <BusinessOutlinedIcon />, path: '/escritorios' }] : []),
             { text: 'Usuários do Sistema', icon: <PersonOutlinedIcon />, path: '/usuarios' },
             { text: 'Parâmetros', icon: <TuneOutlinedIcon />, path: '/parametros' },
         ]
         : [];
 
     const [openConfig, setOpenConfig] = React.useState(
-        ['/usuarios', '/parametros'].some((p) => location.pathname.startsWith(p))
+        ['/escritorios', '/usuarios', '/parametros'].some((p) => location.pathname.startsWith(p))
     );
 
     const mainMenuItems = [

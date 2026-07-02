@@ -2,11 +2,13 @@ package br.com.mpgsistemas.revisionalweb.api.controller;
 
 import br.com.mpgsistemas.revisionalweb.api.dto.UsuarioResponseDTO;
 import br.com.mpgsistemas.revisionalweb.api.model.Tenant;
+import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
 import br.com.mpgsistemas.revisionalweb.api.repository.TenantRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.UsuarioRepository;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -45,10 +47,16 @@ public class TenantController {
 
     /** Ativa/desativa um escritório inteiro (bloqueia o acesso dos membros). */
     @PatchMapping("/{id}/ativo")
-    public ResponseEntity<?> alterarAtivo(@PathVariable Long id, @RequestParam boolean ativo) {
+    public ResponseEntity<?> alterarAtivo(@PathVariable Long id,
+                                          @RequestParam boolean ativo,
+                                          @AuthenticationPrincipal Usuario superAdmin) {
         Tenant tenant = tenantRepository.findById(id).orElse(null);
         if (tenant == null) {
             return ResponseEntity.notFound().build();
+        }
+        // Trava de segurança: desativar o próprio escritório trancaria a plataforma
+        if (!ativo && id.equals(superAdmin.getTenantId())) {
+            return ResponseEntity.badRequest().body("Não é possível desativar o escritório da plataforma.");
         }
         tenant.setAtivo(ativo);
         return ResponseEntity.ok(tenantRepository.save(tenant));

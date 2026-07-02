@@ -11,7 +11,8 @@ import CasoForm from './componentes/casos/CasoForm';
 import Normas from './componentes/normas/Normas';
 import Parametros from './componentes/config/Parametros';
 import Usuarios from './componentes/usuarios/Usuarios';
-import { isAuthenticated, isAdmin } from './services/auth';
+import Escritorios from './componentes/escritorios/Escritorios';
+import { isAuthenticated, isAdmin, isSuperAdmin } from './services/auth';
 
 const RotaProtegida = ({ children }) => {
     if (!isAuthenticated()) return <Navigate to="/login" replace />;
@@ -26,6 +27,12 @@ const RotaPublica = ({ children }) => {
 const RotaAdmin = ({ children }) => {
     if (!isAuthenticated()) return <Navigate to="/login" replace />;
     if (!isAdmin()) return <Navigate to="/dashboard" replace />;
+    return children;
+};
+
+const RotaSuperAdmin = ({ children }) => {
+    if (!isAuthenticated()) return <Navigate to="/login" replace />;
+    if (!isSuperAdmin()) return <Navigate to="/dashboard" replace />;
     return children;
 };
 
@@ -45,6 +52,7 @@ function App() {
                         <Route path="/casos/:id" element={<CasoForm />} />
                         <Route path="/normas" element={<Normas />} />
                         <Route path="/usuarios" element={<RotaAdmin><Usuarios /></RotaAdmin>} />
+                        <Route path="/escritorios" element={<RotaSuperAdmin><Escritorios /></RotaSuperAdmin>} />
                         <Route path="/parametros" element={<RotaAdmin><Parametros /></RotaAdmin>} />
                     </Route>
 
