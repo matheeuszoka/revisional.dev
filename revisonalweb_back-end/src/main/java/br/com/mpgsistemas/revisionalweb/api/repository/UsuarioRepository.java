@@ -13,6 +13,11 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
     // Login flexível: aceita email, cpf ou oab no mesmo campo
     Usuario findByEmailOrCpfOrOab(String email, String cpf, String oab);
 
+    // Variante com tenant já carregado (fetch join): o login checa tenant.ativo
+    // fora de transação e o lazy proxy estouraria LazyInitializationException.
+    @Query("select u from Usuario u join fetch u.tenant where u.email = :login or u.cpf = :login or u.oab = :login")
+    Usuario findByLoginComTenant(String login);
+
     Usuario findByCpf(String cpf);
 
     // Usado no SecurityFilter (fora do open-in-view): tenant já carregado para

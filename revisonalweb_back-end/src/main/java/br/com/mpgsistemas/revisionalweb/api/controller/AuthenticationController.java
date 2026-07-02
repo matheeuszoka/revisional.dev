@@ -49,7 +49,7 @@ public class AuthenticationController {
                                    @RequestParam(defaultValue = "false") boolean force,
                                    HttpServletRequest request) {
 
-        Usuario usuarioDB = repository.findByEmailOrCpfOrOab(data.login(), data.login(), data.login());
+        Usuario usuarioDB = repository.findByLoginComTenant(data.login());
 
         // Conta bloqueada por tentativas: nem tenta autenticar
         if (usuarioDB != null && !usuarioDB.isAccountNonLocked()) {
