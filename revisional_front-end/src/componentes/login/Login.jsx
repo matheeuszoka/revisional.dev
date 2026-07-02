@@ -11,9 +11,10 @@ import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import LoginIcon from '@mui/icons-material/Login';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 
-import { loginUsuario } from '../../services/api';
-import { setSessionToken } from '../../services/auth';
-import { toastSuccess, toastError, alertValidacao, confirmAcao } from '../../services/alerts';
+import { loginUsuario, logoutUsuario } from '../../services/api';
+import { setSessionToken, removeSessionToken } from '../../services/auth';
+import { alterarMinhaSenha } from '../../services/usuarios';
+import Swal, { toastSuccess, toastError, alertValidacao, confirmAcao } from '../../services/alerts';
 import { formatCpf, isValidCpf, looksLikeCpf, onlyDigits } from '../../services/cpf';
 
 const Login = () => {
@@ -31,6 +32,54 @@ const Login = () => {
     const handleLoginChange = (event) => {
         const raw = event.target.value;
         setCredentials({ ...credentials, login: looksLikeCpf(raw) ? formatCpf(raw) : raw });
+    };
+
+    // Primeiro acesso via convite: senha temporária deve ser trocada agora.
+    // Cancelar = não entra (token descartado pelo chamador).
+    const trocarSenhaObrigatoria = async (senhaTemporaria) => {
+        const result = await Swal.fire({
+            title: 'Defina sua nova senha',
+            text: 'Você entrou com uma senha temporária. Escolha uma senha definitiva para continuar.',
+            icon: 'info',
+            html: `
+                <input id="swal-nova-senha" type="password" class="swal2-input" placeholder="Nova senha (mín. 6 caracteres)">
+                <input id="swal-confirma-senha" type="password" class="swal2-input" placeholder="Confirme a nova senha">
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: 'Salvar e entrar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#1565C0',
+            allowOutsideClick: false,
+            preConfirm: () => {
+                const nova = document.getElementById('swal-nova-senha').value;
+                const confirma = document.getElementById('swal-confirma-senha').value;
+                if (!nova || nova.length < 6) {
+                    Swal.showValidationMessage('A nova senha deve ter ao menos 6 caracteres.');
+                    return false;
+                }
+                if (nova !== confirma) {
+                    Swal.showValidationMessage('As senhas não conferem.');
+                    return false;
+                }
+                if (nova === senhaTemporaria) {
+                    Swal.showValidationMessage('A nova senha deve ser diferente da temporária.');
+                    return false;
+                }
+                return nova;
+            },
+        });
+
+        if (!result.isConfirmed || !result.value) return false;
+
+        try {
+            await alterarMinhaSenha(senhaTemporaria, result.value);
+            toastSuccess('Senha alterada com sucesso.');
+            return true;
+        } catch {
+            toastError('Não foi possível alterar a senha. Tente novamente.');
+            return false;
+        }
     };
 
     const handleLogin = async (event, force = false) => {
@@ -61,6 +110,17 @@ const Login = () => {
 
             const token = data.token || (typeof data === 'string' ? data : null);
             if (token) setSessionToken(token);
+
+            // Convite com senha temporária: obriga a troca antes de entrar
+            if (data.forcarTrocaSenha) {
+                const trocou = await trocarSenhaObrigatoria(credentials.senha);
+                if (!trocou) {
+                    // Desiste: derruba a sessão no servidor e descarta o token local
+                    try { await logoutUsuario(); } catch { /* segue logout local */ }
+                    removeSessionToken();
+                    return;
+                }
+            }
 
             toastSuccess('Login efetuado com sucesso');
             navigate('/dashboard');

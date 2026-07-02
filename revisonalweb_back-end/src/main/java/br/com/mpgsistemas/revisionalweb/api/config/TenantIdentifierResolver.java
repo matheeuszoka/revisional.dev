@@ -23,6 +23,14 @@ public class TenantIdentifierResolver
         return TenantContext.get();
     }
 
+    // Sessão "root" (SUPER_ADMIN): o Hibernate NÃO aplica o filtro tenant_id nos
+    // SELECTs — visão cross-tenant da plataforma. INSERTs continuam gravando o
+    // tenant corrente (o próprio tenant do super-admin).
+    @Override
+    public boolean isRoot(Long tenantId) {
+        return TenantContext.isSuperAdmin();
+    }
+
     @Override
     public boolean validateExistingCurrentSessions() {
         return false;

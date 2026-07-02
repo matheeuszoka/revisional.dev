@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Typography } from '@mui/material';
 
 import theme from './theme';
 import MainLayout from './componentes/MainLayout';
@@ -11,6 +10,7 @@ import Casos from './componentes/casos/Casos';
 import CasoForm from './componentes/casos/CasoForm';
 import Normas from './componentes/normas/Normas';
 import Parametros from './componentes/config/Parametros';
+import Usuarios from './componentes/usuarios/Usuarios';
 import { isAuthenticated, isAdmin } from './services/auth';
 
 const RotaProtegida = ({ children }) => {
@@ -29,13 +29,6 @@ const RotaAdmin = ({ children }) => {
     return children;
 };
 
-const EmBreve = ({ title }) => (
-    <Box sx={{ p: 2 }}>
-        <Typography variant="h5" fontWeight="bold" color="secondary.main">{title}</Typography>
-        <Typography color="text.secondary">Em breve.</Typography>
-    </Box>
-);
-
 function App() {
     return (
         <ThemeProvider theme={theme}>
@@ -51,7 +44,7 @@ function App() {
                         <Route path="/casos/novo" element={<CasoForm />} />
                         <Route path="/casos/:id" element={<CasoForm />} />
                         <Route path="/normas" element={<Normas />} />
-                        <Route path="/usuarios" element={<RotaAdmin><EmBreve title="Usuários" /></RotaAdmin>} />
+                        <Route path="/usuarios" element={<RotaAdmin><Usuarios /></RotaAdmin>} />
                         <Route path="/parametros" element={<RotaAdmin><Parametros /></RotaAdmin>} />
                     </Route>
 

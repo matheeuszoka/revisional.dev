@@ -57,6 +57,12 @@ public class AuthenticationController {
                     .body("Conta temporariamente bloqueada. Tente novamente mais tarde.");
         }
 
+        // Escritório desativado pela plataforma: bloqueia todos os membros
+        if (usuarioDB != null && usuarioDB.getTenant() != null && !usuarioDB.getTenant().isAtivo()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Escritório desativado. Contate o suporte da plataforma.");
+        }
+
         // Sessão já ativa noutro dispositivo (a menos que force=true)
         if (usuarioDB != null && usuarioDB.getTokenAtivo() != null && !force) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body("Sessão já ativa noutro dispositivo.");
@@ -78,7 +84,8 @@ public class AuthenticationController {
             usuarioLogado.setTokenAtivo(token); // sobrepõe sessão anterior
             repository.save(usuarioLogado);
 
-            return ResponseEntity.ok(new LoginResponseDTO(token));
+            return ResponseEntity.ok(new LoginResponseDTO(token,
+                    Boolean.TRUE.equals(usuarioLogado.getForcarTrocaSenha())));
 
         } catch (AuthenticationException e) {
             // Falha: incrementa tentativas e bloqueia após 5 erros
@@ -109,23 +116,27 @@ public class AuthenticationController {
             return ResponseEntity.badRequest().body("Informe o escritório/empresa.");
         }
 
-        // Multi-tenancy: resolve o tenant pelo nome. Novo escritório => cria tenant e
-        // o primeiro usuário vira ADMIN dele. Escritório existente => anexa como AUDITOR.
-        Tenant tenant = tenantRepository.findByNomeIgnoreCase(data.nomeEscritorio().trim());
-        boolean tenantNovo = tenant == null;
-        UsuarioRole role;
-        if (tenantNovo) {
-            tenant = new Tenant();
-            tenant.setNome(data.nomeEscritorio().trim());
-            if (data.cnpjEscritorio() != null && !data.cnpjEscritorio().isBlank()) {
-                tenant.setCnpj(data.cnpjEscritorio().replaceAll("\\D", ""));
-            }
-            tenant.setAtivo(true);
-            tenant = tenantRepository.save(tenant);
-            role = UsuarioRole.ROLE_ADMIN; // dono do escritório
-        } else {
-            role = data.role() != null ? data.role() : UsuarioRole.ROLE_AUDITOR;
+        // Multi-tenancy: register público SÓ cria escritório novo (o 1º usuário vira
+        // ADMIN dele). Anexar-se a escritório existente é vedado — membros extras
+        // entram por convite do admin do tenant (POST /api/usuarios).
+        String nomeEscritorio = data.nomeEscritorio().trim();
+        if (tenantRepository.findByNomeIgnoreCase(nomeEscritorio) != null) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Escritório já cadastrado. Peça um convite ao administrador do escritório.");
         }
+        String cnpj = data.cnpjEscritorio() != null ? data.cnpjEscritorio().replaceAll("\\D", "") : "";
+        if (!cnpj.isBlank() && tenantRepository.existsByCnpj(cnpj)) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("CNPJ já cadastrado. Peça um convite ao administrador do escritório.");
+        }
+
+        Tenant tenant = new Tenant();
+        tenant.setNome(nomeEscritorio);
+        if (!cnpj.isBlank()) {
+            tenant.setCnpj(cnpj);
+        }
+        tenant.setAtivo(true);
+        tenant = tenantRepository.save(tenant);
 
         Usuario novo = new Usuario();
         novo.setNomeCompleto(data.nomeCompleto());
@@ -133,7 +144,7 @@ public class AuthenticationController {
         novo.setCpf(data.cpf());
         novo.setOab(data.oab());
         novo.setSenha(passwordEncoder.encode(data.senha()));
-        novo.setUsuarioRole(role);
+        novo.setUsuarioRole(UsuarioRole.ROLE_ADMIN); // dono do escritório
         novo.setTenant(tenant);
         novo.setAtivo(true);
 

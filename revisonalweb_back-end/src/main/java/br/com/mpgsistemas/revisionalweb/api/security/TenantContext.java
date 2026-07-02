@@ -13,6 +13,11 @@ public final class TenantContext {
 
     private static final ThreadLocal<Long> CONTEXTO = new ThreadLocal<>();
 
+    // SUPER_ADMIN (plataforma): mantém o próprio tenant p/ INSERTs, mas o
+    // TenantIdentifierResolver marca a sessão como "root" e o Hibernate deixa
+    // de filtrar SELECT/UPDATE/DELETE — enxerga todos os tenants.
+    private static final ThreadLocal<Boolean> SUPER_ADMIN = new ThreadLocal<>();
+
     private TenantContext() {
     }
 
@@ -25,7 +30,16 @@ public final class TenantContext {
         return t != null ? t : SEM_TENANT;
     }
 
+    public static void setSuperAdmin(boolean superAdmin) {
+        SUPER_ADMIN.set(superAdmin);
+    }
+
+    public static boolean isSuperAdmin() {
+        return Boolean.TRUE.equals(SUPER_ADMIN.get());
+    }
+
     public static void clear() {
         CONTEXTO.remove();
+        SUPER_ADMIN.remove();
     }
 }

@@ -41,7 +41,17 @@ public class AdminUserSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        if (usuarioRepository.findByCpf(adminCpf) == null) {
+        Usuario existente = usuarioRepository.findByCpf(adminCpf);
+
+        // Admin da plataforma (MPG) é SUPER_ADMIN: administra todos os tenants.
+        // Upgrade de instalações antigas em que o seed nasceu como ROLE_ADMIN.
+        if (existente != null && existente.getUsuarioRole() != UsuarioRole.ROLE_SUPER_ADMIN) {
+            existente.setUsuarioRole(UsuarioRole.ROLE_SUPER_ADMIN);
+            usuarioRepository.save(existente);
+            System.out.println("Usuário admin da plataforma promovido a ROLE_SUPER_ADMIN.");
+        }
+
+        if (existente == null) {
             // Multi-tenancy: garante o tenant inicial (escritório padrão da plataforma).
             Tenant tenant = tenantRepository.findByNomeIgnoreCase(adminTenantNome);
             if (tenant == null) {
@@ -57,12 +67,12 @@ public class AdminUserSeeder implements CommandLineRunner {
             admin.setEmail(adminEmail);
             admin.setOab(adminOab);
             admin.setSenha(passwordEncoder.encode(adminSenha));
-            admin.setUsuarioRole(UsuarioRole.ROLE_ADMIN);
+            admin.setUsuarioRole(UsuarioRole.ROLE_SUPER_ADMIN);
             admin.setTenant(tenant);
             admin.setAtivo(true);
 
             usuarioRepository.save(admin);
-            System.out.println("Usuário admin inicial criado (ROLE_ADMIN). Altere a senha padrão.");
+            System.out.println("Usuário admin da plataforma criado (ROLE_SUPER_ADMIN). Altere a senha padrão.");
         }
     }
 }

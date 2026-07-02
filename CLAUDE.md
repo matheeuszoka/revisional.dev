@@ -13,7 +13,7 @@ Automatiza auditoria de contratos de financiamento bancário (foco veículos PF)
 - **Java 17 (LTS)**, **Spring Boot 4.1.0**, empacotamento **WAR** (Tomcat externo).
 - Spring Boot starters: `webmvc`, `data-jpa`, `actuator`, `devtools`.
 - **Lombok** (getters/setters/builders).
-- **PostgreSQL** (driver `postgresql`), **Flyway** (migrações `V1..V4`).
+- **PostgreSQL** (driver `postgresql`), **Flyway** (migrações `V1..V5`).
 - **Spring Security + `com.auth0:java-jwt`** (auth JWT stateless).
 - **PDFBox 3.0.5** (extração texto PDF) + **Tess4J 5.16** (OCR Tesseract) + **OpenPDF 2.0.3** (geração de laudos PDF, pacote `com.lowagie.text`).
 - **MinIO** (armazenamento de documentos anexados).
@@ -42,7 +42,7 @@ revisional.dev/
 │       │                 AuditItem, FonteNormativa, Caso*/Configuracao* DTOs
 │       └── model/      → Usuario, Tenant, CasoRevisional, DadosContrato, UploadDocumento,
 │                         EventoAuditoria, ParametrosSistema, CampoExtraido, ConfiguracaoSistema
-│   └── src/main/resources/db/migration/ → V1..V4 (V4 = multi-tenancy)
+│   └── src/main/resources/db/migration/ → V1..V5 (V4 = multi-tenancy, V5 = config por tenant)
 └── revisional_front-end/         # React SPA (Create React App)
     ├── package.json
     └── src/
@@ -147,9 +147,12 @@ jobs:
 - **JSONB:** DTOs complexos (`DadosContrato`, `ResultadoCalculo`, `ReferenciaMercado`) serializados com `@JdbcTypeCode(SqlTypes.JSON)` na tabela do caso — evita explosão de tabelas.
 
 ### Multi-tenancy (discriminator)
-- Tenant = **escritório/empresa**. Isolamento por coluna `tenant_id` via Hibernate `@TenantId` em `CasoRevisional`, `UploadDocumento`, `EventoAuditoria` → Hibernate filtra todo SELECT/UPDATE/DELETE e preenche INSERT **automaticamente**. Migração `V4__multi_tenancy.sql`.
+- Tenant = **escritório/empresa**. Isolamento por coluna `tenant_id` via Hibernate `@TenantId` em `CasoRevisional`, `UploadDocumento`, `EventoAuditoria`, `ConfiguracaoSistema` → Hibernate filtra todo SELECT/UPDATE/DELETE e preenche INSERT **automaticamente**. Migrações `V4` (multi-tenancy) e `V5` (config por tenant).
 - `Usuario` referencia `Tenant` (FK), mas **sem** `@TenantId` de propósito: login é cross-tenant (acha por cpf/email/oab global, só então resolve o tenant).
-- JWT carrega claim `tenant_id`. `SecurityFilter` seta/limpa `TenantContext` (ThreadLocal) por requisição; `TenantIdentifierResolver` alimenta o Hibernate. Register self-signup: escritório novo cria `Tenant` e 1º usuário vira `ROLE_ADMIN`.
+- JWT carrega claim `tenant_id`. `SecurityFilter` seta/limpa `TenantContext` (ThreadLocal) por requisição; `TenantIdentifierResolver` alimenta o Hibernate.
+- **Onboarding**: register público **só cria escritório novo** (`Tenant` + 1º usuário `ROLE_ADMIN`); nome/CNPJ de escritório já existente → `409`. Membros extras entram **por convite do admin** (`POST /api/usuarios`, tenant sempre do JWT) com senha temporária + `forcar_troca_senha` (login devolve `forcarTrocaSenha`; front obriga a troca via `PUT /api/usuarios/senha` — liberado a qualquer papel, inclusive VISUALIZADOR).
+- **`ROLE_SUPER_ADMIN`** (plataforma/MPG, acima de `ROLE_ADMIN`): `SecurityFilter` marca `TenantContext.setSuperAdmin(true)` e `TenantIdentifierResolver.isRoot()` desliga o filtro de tenant nos SELECTs (sessão root do Hibernate; INSERTs continuam no tenant próprio). Endpoints `/api/tenants` (listar/ativar-desativar escritórios + usuários por tenant) só SUPER_ADMIN. Seed inicial (`AdminUserSeeder`) cria/promove o admin da plataforma a SUPER_ADMIN. Tenant desativado bloqueia login e requisições dos membros.
+- **Config OCR/IA por tenant**: `ConfiguracaoSistema` tem `@TenantId` (1 linha por escritório, chave OpenRouter própria → isola billing). `ConfiguracaoService.carregar()` busca por `findByTenantId(TenantContext.get())` (não depende do filtro automático — na sessão root ele não é aplicado) e semeia dos defaults no primeiro acesso do tenant.
 
 ## 💻 Arquitetura Front-end
 
@@ -214,7 +217,8 @@ O protótipo Flask/Python `v2.0.0` foi a **referência funcional completa**. A p
 
 ### ⭐ Além do protótipo (Java não tem equivalente Flask)
 - **Multi-tenancy** (discriminator `@TenantId`) — ver seção acima.
-- **Configuração via tela admin** (`ConfiguracaoSistema`, `ConfiguracaoService`, `/parametros`): OCR/IA editáveis; chave OpenRouter cifrada (AES-GCM). Migração `V3`.
+- **Configuração via tela admin** (`ConfiguracaoSistema`, `ConfiguracaoService`, `/parametros`): OCR/IA editáveis **por tenant**; chave OpenRouter cifrada (AES-GCM). Migrações `V3` + `V5`.
+- **Gestão de membros** (`UsuarioController`, tela `/usuarios`): convite com senha temporária, troca obrigatória no 1º login, ativar/desativar membro (derruba sessão).
 
 > ⚠️ Manter as regras de código (null safety de OCR, sem números mágicos → `ParametrosSistema`, Service isolado de banco/HTTP, LGPD nos logs).
 
@@ -222,7 +226,7 @@ O protótipo Flask/Python `v2.0.0` foi a **referência funcional completa**. A p
 - `docker/`, Dockerfiles, `deploy.yml` (espelhar `sigapsi.dev`).
 - Endpoint dedicado de download `audit.json` (hoje só dentro do ZIP).
 - Testes automatizados (Testcontainers ainda não no `pom.xml`).
-- Tela de gestão de usuários/membros do tenant (`/usuarios` é placeholder "Em breve").
+- Tela da plataforma p/ SUPER_ADMIN gerenciar escritórios (API `/api/tenants` pronta; falta UI).
 
 ## 🔐 Variáveis de Ambiente (`.env`)
 

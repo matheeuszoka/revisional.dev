@@ -3,17 +3,17 @@ package br.com.mpgsistemas.revisionalweb.api.service;
 import br.com.mpgsistemas.revisionalweb.api.model.ConfiguracaoSistema;
 import br.com.mpgsistemas.revisionalweb.api.model.ParametrosSistema;
 import br.com.mpgsistemas.revisionalweb.api.repository.ConfiguracaoSistemaRepository;
+import br.com.mpgsistemas.revisionalweb.api.security.TenantContext;
 import org.springframework.stereotype.Service;
 
 /**
- * Fonte única dos parâmetros operacionais editáveis (OCR + IA). Persiste em banco
- * (linha id=1) e semeia do ambiente no primeiro boot. A chave da IA fica cifrada;
+ * Fonte única dos parâmetros operacionais editáveis (OCR + IA). Uma linha POR
+ * TENANT: cada escritório tem sua própria configuração (inclusive chave OpenRouter),
+ * semeada dos defaults de ambiente no primeiro acesso. A chave da IA fica cifrada;
  * só este serviço a decifra para consumo interno (nunca trafega em claro pela API).
  */
 @Service
 public class ConfiguracaoService {
-
-    private static final long ID = 1L;
 
     private final ConfiguracaoSistemaRepository repository;
     private final ParametrosSistema defaults;
@@ -27,15 +27,19 @@ public class ConfiguracaoService {
         this.cripto = cripto;
     }
 
-    /** Carrega a configuração; cria/semeia a partir do ambiente se ainda vazia. */
+    /** Carrega a configuração do tenant corrente; cria/semeia do ambiente se ainda vazia. */
     public ConfiguracaoSistema carregar() {
-        ConfiguracaoSistema c = repository.findById(ID).orElseGet(() -> {
-            ConfiguracaoSistema nova = new ConfiguracaoSistema();
-            nova.setId(ID);
-            return nova;
-        });
+        Long tenantId = TenantContext.get();
+        // Fora de requisição autenticada não há tenant — nada a carregar/semear.
+        if (TenantContext.SEM_TENANT.equals(tenantId)) {
+            throw new IllegalStateException("Configuração exige um tenant ativo na requisição.");
+        }
+        // Busca explícita por tenant (não depende do filtro automático: na sessão
+        // root do SUPER_ADMIN o Hibernate não filtra, e o findAll veria todos).
+        ConfiguracaoSistema c = repository.findByTenantId(tenantId)
+                .orElseGet(ConfiguracaoSistema::new); // tenant_id preenchido pelo Hibernate no INSERT
         boolean alterou = semearSeVazio(c);
-        if (alterou) c = repository.save(c);
+        if (alterou || c.getId() == null) c = repository.save(c);
         return c;
     }
 

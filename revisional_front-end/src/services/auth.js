@@ -77,6 +77,7 @@ export const getUserRole = () => getDecodedToken()?.role || null;
 export const getIdUsuario = () => getDecodedToken()?.id_usuario || null;
 export const getNomeCompleto = () => getDecodedToken()?.nome_completo || null;
 
-export const isAdmin = () => getUserRole() === 'ROLE_ADMIN';
-export const isAuditor = () => ['ROLE_AUDITOR', 'ROLE_ADMIN'].includes(getUserRole());
+export const isSuperAdmin = () => getUserRole() === 'ROLE_SUPER_ADMIN';
+export const isAdmin = () => ['ROLE_ADMIN', 'ROLE_SUPER_ADMIN'].includes(getUserRole());
+export const isAuditor = () => ['ROLE_AUDITOR', 'ROLE_ADMIN', 'ROLE_SUPER_ADMIN'].includes(getUserRole());
 export const isVisualizador = () => getUserRole() === 'ROLE_VISUALIZADOR';

@@ -44,6 +44,9 @@ public class SecurityConfigurations {
                         .requestMatchers("/actuator/**").permitAll()
                         // Dispatch interno de erro: responde o status real, não 401
                         .requestMatchers("/error").permitAll()
+                        // Troca da própria senha: liberada a qualquer papel autenticado
+                        // (inclusive VISUALIZADOR — precisa vir antes do bloqueio de PUT)
+                        .requestMatchers(HttpMethod.PUT, "/api/usuarios/senha").authenticated()
                         // VISUALIZADOR só pode ler (GET)
                         .requestMatchers(HttpMethod.POST, "/api/**").not().hasRole("VISUALIZADOR")
                         .requestMatchers(HttpMethod.PUT, "/api/**").not().hasRole("VISUALIZADOR")

@@ -1,6 +1,7 @@
 package br.com.mpgsistemas.revisionalweb.api.security;
 
 import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
+import br.com.mpgsistemas.revisionalweb.api.model.UsuarioRole;
 import br.com.mpgsistemas.revisionalweb.api.repository.UsuarioRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -33,14 +34,18 @@ public class SecurityFilter extends OncePerRequestFilter {
             if (token != null) {
                 var cpf = tokenService.validateToken(token);
                 if (StringUtils.hasText(cpf)) {
-                    Usuario usuario = usuarioRepository.findByCpf(cpf);
+                    Usuario usuario = usuarioRepository.findByCpfComTenant(cpf);
                     // Só autentica se o token for o token ativo (sessão única)
-                    if (usuario != null && token.equals(usuario.getTokenAtivo())) {
+                    // e o escritório (tenant) não estiver desativado pela plataforma.
+                    if (usuario != null && token.equals(usuario.getTokenAtivo())
+                            && usuario.getTenant().isAtivo()) {
                         var authentication = new UsernamePasswordAuthenticationToken(
                                 usuario, null, usuario.getAuthorities());
                         SecurityContextHolder.getContext().setAuthentication(authentication);
                         // MULTI-TENANCY: a partir daqui o Hibernate filtra os dados do tenant.
                         TenantContext.set(usuario.getTenantId());
+                        // SUPER_ADMIN (plataforma) enxerga todos os tenants (sessão root).
+                        TenantContext.setSuperAdmin(usuario.getUsuarioRole() == UsuarioRole.ROLE_SUPER_ADMIN);
                     }
                 }
             }
