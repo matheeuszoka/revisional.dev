@@ -16,10 +16,13 @@ import java.util.List;
 @Table(name = "table_usuario")
 public class Usuario implements UserDetails {
 
+    // Campo em Java DEVE se chamar "id": o Spring Data (4.x) deriva queries
+    // exists/count selecionando a propriedade "id" — nome fora do padrão
+    // (id_usuario) quebra existsByCpf/Email/Oab com PropertyReferenceException.
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id_usuario")
-    private Long id_usuario;
+    private Long id;
 
     // --- Identificadores de login (qualquer um: email, cpf ou oab) ---
     @Column(unique = true, length = 11)

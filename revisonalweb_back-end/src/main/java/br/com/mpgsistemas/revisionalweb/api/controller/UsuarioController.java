@@ -93,7 +93,7 @@ public class UsuarioController {
         if (alvo == null || !admin.getTenantId().equals(alvo.getTenantId())) {
             return ResponseEntity.notFound().build();
         }
-        if (alvo.getId_usuario().equals(admin.getId_usuario())) {
+        if (alvo.getId().equals(admin.getId())) {
             return ResponseEntity.badRequest().body("Não é possível desativar a própria conta.");
         }
         if (alvo.getUsuarioRole() == UsuarioRole.ROLE_SUPER_ADMIN) {

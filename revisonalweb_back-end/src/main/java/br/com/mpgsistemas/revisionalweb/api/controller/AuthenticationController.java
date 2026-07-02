@@ -171,7 +171,7 @@ public class AuthenticationController {
         if (authentication != null && authentication.getPrincipal() instanceof Usuario usuario) {
             response.put("nomeCompleto", usuario.getNomeCompleto());
             response.put("role", usuario.getUsuarioRole());
-            response.put("id_usuario", usuario.getId_usuario());
+            response.put("id_usuario", usuario.getId());
         }
         return ResponseEntity.ok(response);
     }

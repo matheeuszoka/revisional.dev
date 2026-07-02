@@ -20,7 +20,7 @@ public record UsuarioResponseDTO(
 ) {
     public static UsuarioResponseDTO from(Usuario u) {
         return new UsuarioResponseDTO(
-                u.getId_usuario(),
+                u.getId(),
                 u.getNomeCompleto(),
                 u.getEmail(),
                 u.getCpf(),
