@@ -3,16 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import {
     Box, Typography, Paper, Button, Table, TableBody, TableCell, TableContainer,
     TableHead, TableRow, TableSortLabel, TablePagination, Chip, IconButton, Tooltip,
-    CircularProgress, Stack, TextField, InputAdornment
+    CircularProgress, Stack, TextField, InputAdornment, ToggleButtonGroup, ToggleButton
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import FolderSpecialOutlinedIcon from '@mui/icons-material/FolderSpecialOutlined';
+import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
+import FolderZipOutlinedIcon from '@mui/icons-material/FolderZipOutlined';
 
-import { listarCasos, excluirCaso } from '../../services/casos';
-import { confirmExclusao, toastSuccess } from '../../services/alerts';
+import { listarCasos, excluirCaso, getRelatorio, getPacoteZip } from '../../services/casos';
+import { confirmExclusao, toastSuccess, toastError } from '../../services/alerts';
+import { numberToMoeda } from '../../services/moeda';
 
 const fmtData = (d) => (d ? new Date(d).toLocaleDateString('pt-BR') : '—');
 
@@ -52,12 +55,15 @@ export default function Casos() {
     const [order, setOrder] = useState('desc');
     const [busca, setBusca] = useState('');
     const [buscaAplicada, setBuscaAplicada] = useState('');
+    // Filtro de status: 'todos' | 'pronto' (laudo pronto) | 'analise' (em análise)
+    const [status, setStatus] = useState('todos');
 
     const carregar = useCallback(async () => {
         setLoading(true);
         try {
             const resp = await listarCasos({
                 page, size: rowsPerPage, sort: orderBy, dir: order, q: buscaAplicada || undefined,
+                comResultado: status === 'todos' ? undefined : status === 'pronto',
             });
             setCasos(resp.content || []);
             setTotal(resp.totalElements || 0);
@@ -66,7 +72,7 @@ export default function Casos() {
         } finally {
             setLoading(false);
         }
-    }, [page, rowsPerPage, orderBy, order, buscaAplicada]);
+    }, [page, rowsPerPage, orderBy, order, buscaAplicada, status]);
 
     useEffect(() => { carregar(); }, [carregar]);
 
@@ -86,6 +92,30 @@ export default function Casos() {
         setPage(0);
     };
 
+    // Ações rápidas: laudo/ZIP direto da linha, sem abrir o caso
+    const abrirParecer = async (caso) => {
+        try {
+            const blob = await getRelatorio(caso.id, 'parecer');
+            window.open(URL.createObjectURL(blob), '_blank');
+        } catch {
+            toastError('Não foi possível gerar o parecer.');
+        }
+    };
+
+    const baixarPacote = async (caso) => {
+        try {
+            const blob = await getPacoteZip(caso.id);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `caso-${caso.id}-pacote.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch {
+            toastError('Não foi possível gerar o pacote ZIP.');
+        }
+    };
+
     const handleExcluir = async (caso) => {
         const ok = await confirmExclusao({ text: `Excluir o caso "${caso.titulo || 'sem título'}"? Esta ação não pode ser desfeita.` });
         if (!ok) return;
@@ -96,7 +126,7 @@ export default function Casos() {
         else carregar();
     };
 
-    const semCasos = !loading && total === 0 && !buscaAplicada;
+    const semCasos = !loading && total === 0 && !buscaAplicada && status === 'todos';
 
     return (
         <Box>
@@ -114,17 +144,28 @@ export default function Casos() {
 
             <Paper elevation={0} sx={{ boxShadow: '0 2px 10px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                 {!semCasos && (
-                    <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}
+                           sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
                         <TextField
                             size="small"
                             fullWidth
-                            placeholder="Buscar por título…"
+                            placeholder="Buscar por título, cliente ou instituição…"
                             value={busca}
                             onChange={(e) => setBusca(e.target.value)}
                             InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
                             sx={{ maxWidth: 460 }}
                         />
-                    </Box>
+                        <ToggleButtonGroup
+                            size="small"
+                            exclusive
+                            value={status}
+                            onChange={(_, novo) => { if (novo) { setStatus(novo); setPage(0); } }}
+                        >
+                            <ToggleButton value="todos" sx={{ px: 2, textTransform: 'none' }}>Todos</ToggleButton>
+                            <ToggleButton value="pronto" sx={{ px: 2, textTransform: 'none' }}>Laudo pronto</ToggleButton>
+                            <ToggleButton value="analise" sx={{ px: 2, textTransform: 'none' }}>Em análise</ToggleButton>
+                        </ToggleButtonGroup>
+                    </Stack>
                 )}
 
                 {loading ? (
@@ -139,12 +180,16 @@ export default function Casos() {
                     </Box>
                 ) : total === 0 ? (
                     <Box sx={{ py: 6, textAlign: 'center' }}>
-                        <Typography color="text.secondary">Nenhum caso encontrado para “{buscaAplicada}”.</Typography>
+                        <Typography color="text.secondary">
+                            {buscaAplicada
+                                ? `Nenhum caso encontrado para “${buscaAplicada}”.`
+                                : 'Nenhum caso com este status.'}
+                        </Typography>
                     </Box>
                 ) : (
                     <>
                         <TableContainer sx={{ overflowX: 'auto' }}>
-                            <Table sx={{ minWidth: 820 }} aria-label="Casos revisionais">
+                            <Table sx={{ minWidth: 960 }} aria-label="Casos revisionais">
                                 <TableHead>
                                     <TableRow sx={{ '& th': { fontWeight: 700, color: 'text.secondary', bgcolor: '#f8fafc', whiteSpace: 'nowrap' } }}>
                                         <TableCell sortDirection={orderBy === 'titulo' ? order : false}>
@@ -158,6 +203,7 @@ export default function Casos() {
                                         </TableCell>
                                         <TableCell>Cliente</TableCell>
                                         <TableCell>Instituição</TableCell>
+                                        <TableCell align="right">Valor financiado</TableCell>
                                         <TableCell sortDirection={orderBy === 'atualizadoEm' ? order : false}>
                                             <TableSortLabel
                                                 active={orderBy === 'atualizadoEm'}
@@ -178,6 +224,9 @@ export default function Casos() {
                                             <CelulaTexto max={260} bold>{c.titulo || '—'}</CelulaTexto>
                                             <CelulaTexto max={200}>{c.clienteNome || '—'}</CelulaTexto>
                                             <CelulaTexto max={200}>{c.instituicao || '—'}</CelulaTexto>
+                                            <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                                                {c.valorFinanciado != null ? `R$ ${numberToMoeda(c.valorFinanciado)}` : '—'}
+                                            </TableCell>
                                             <TableCell sx={{ whiteSpace: 'nowrap' }}>{fmtData(c.atualizadoEm)}</TableCell>
                                             <TableCell sx={{ whiteSpace: 'nowrap', maxWidth: 200 }}>
                                                 {c.classificacaoRisco ? (
@@ -194,6 +243,20 @@ export default function Casos() {
                                                 />
                                             </TableCell>
                                             <TableCell align="right" sx={{ whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+                                                {c.temResultado && (
+                                                    <>
+                                                        <Tooltip title="Abrir parecer (PDF)">
+                                                            <IconButton size="small" onClick={() => abrirParecer(c)}>
+                                                                <PictureAsPdfOutlinedIcon fontSize="small" />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                        <Tooltip title="Baixar pacote (ZIP)">
+                                                            <IconButton size="small" onClick={() => baixarPacote(c)}>
+                                                                <FolderZipOutlinedIcon fontSize="small" />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                    </>
+                                                )}
                                                 <Tooltip title="Editar">
                                                     <IconButton size="small" onClick={() => navigate(`/casos/${c.id}`)}>
                                                         <EditOutlinedIcon fontSize="small" />

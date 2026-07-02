@@ -35,8 +35,10 @@ public class CasoRevisionalController {
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "atualizadoEm") String sort,
             @RequestParam(defaultValue = "desc") String dir,
-            @RequestParam(required = false) String q) {
-        return PaginaResposta.de(service.listar(auditor, page, size, sort, dir, q), CasoResumoDTO::from);
+            @RequestParam(required = false) String q,
+            // Filtro de status: null=todos, true=laudo pronto, false=em análise
+            @RequestParam(required = false) Boolean comResultado) {
+        return PaginaResposta.de(service.listar(auditor, page, size, sort, dir, q, comResultado), CasoResumoDTO::from);
     }
 
     @GetMapping("/{id}")

@@ -16,6 +16,7 @@ import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
 import br.com.mpgsistemas.revisionalweb.api.repository.CasoRevisionalRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.EventoAuditoriaRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.UploadDocumentoRepository;
+import br.com.mpgsistemas.revisionalweb.api.security.TenantContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,7 +32,6 @@ import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -74,18 +74,22 @@ public class CasoRevisionalService {
         this.eventoRepository = eventoRepository;
     }
 
-    // Colunas reais ordenáveis (cliente/instituição vivem em JSONB, não dá pra ordenar via JPA).
-    private static final Set<String> ORDENAVEIS = Set.of("titulo", "criadoEm", "atualizadoEm", "id");
+    // Colunas reais ordenáveis, mapeadas p/ o nome físico (a listagem usa query
+    // nativa; cliente/instituição vivem em JSONB e não são ordenáveis).
+    private static final Map<String, String> ORDENAVEIS = Map.of(
+            "titulo", "titulo",
+            "criadoEm", "criado_em",
+            "atualizadoEm", "atualizado_em",
+            "id", "id_caso_revisional");
 
-    public Page<CasoRevisional> listar(Usuario auditor, int page, int size, String sort, String dir, String q) {
-        String campo = ORDENAVEIS.contains(sort) ? sort : "atualizadoEm";
+    public Page<CasoRevisional> listar(Usuario auditor, int page, int size, String sort, String dir,
+                                       String q, Boolean comResultado) {
+        String coluna = ORDENAVEIS.getOrDefault(sort, "atualizado_em");
         Sort.Direction direcao = "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
-        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)), Sort.by(direcao, campo));
+        Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)), Sort.by(direcao, coluna));
 
-        if (q != null && !q.isBlank()) {
-            return repository.findByAuditor_CpfAndTituloContainingIgnoreCase(auditor.getCpf(), q.trim(), pageable);
-        }
-        return repository.findByAuditor_Cpf(auditor.getCpf(), pageable);
+        String termo = (q == null || q.isBlank()) ? null : q.trim();
+        return repository.buscarPagina(TenantContext.get(), auditor.getCpf(), termo, comResultado, pageable);
     }
 
     public CasoRevisional buscar(Long id, Usuario auditor) {

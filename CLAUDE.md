@@ -226,7 +226,9 @@ O protótipo Flask/Python `v2.0.0` foi a **referência funcional completa**. A p
 - `docker/`, Dockerfiles, `deploy.yml` (espelhar `sigapsi.dev`).
 - Endpoint dedicado de download `audit.json` (hoje só dentro do ZIP).
 - Testes automatizados (Testcontainers ainda não no `pom.xml`).
-- Tela da plataforma p/ SUPER_ADMIN gerenciar escritórios (API `/api/tenants` pronta; falta UI).
+- **TODO — gestão de escritórios pelo SUPER_ADMIN** (tela `/escritorios` já lista/ativa/desativa; falta):
+  - **Criar escritório pelo painel**: botão "Novo escritório" — SUPER_ADMIN cria `Tenant` (nome + CNPJ) + admin inicial do cliente com senha temporária (`forcar_troca_senha`, mesmo fluxo do convite de membros). Substitui o workaround de usar o register público em nome do cliente.
+  - **Editar escritório**: alterar nome/CNPJ de tenant existente (`PUT /api/tenants/{id}`).
 
 ## 🔐 Variáveis de Ambiente (`.env`)
 
