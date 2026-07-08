@@ -124,7 +124,9 @@ public class AuthenticationController {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body("Escritório já cadastrado. Peça um convite ao administrador do escritório.");
         }
-        String cnpj = data.cnpjEscritorio() != null ? data.cnpjEscritorio().replaceAll("\\D", "") : "";
+        // Mantém [0-9A-Z]: suporta CNPJ numérico e o novo alfanumérico da Receita.
+        String cnpj = data.cnpjEscritorio() != null
+                ? data.cnpjEscritorio().toUpperCase().replaceAll("[^0-9A-Z]", "") : "";
         if (!cnpj.isBlank() && tenantRepository.existsByCnpj(cnpj)) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body("CNPJ já cadastrado. Peça um convite ao administrador do escritório.");
@@ -150,6 +152,23 @@ public class AuthenticationController {
 
         repository.save(novo);
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Renova o token da sessão corrente antes de expirar (sessão única preservada:
+     * o novo token substitui token_ativo e o anterior deixa de valer).
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof Usuario usuario)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Nenhum usuário autenticado.");
+        }
+        var token = tokenService.generateToken(usuario);
+        usuario.setTokenAtivo(token);
+        repository.save(usuario);
+        return ResponseEntity.ok(new LoginResponseDTO(token,
+                Boolean.TRUE.equals(usuario.getForcarTrocaSenha())));
     }
 
     @PostMapping("/logout")

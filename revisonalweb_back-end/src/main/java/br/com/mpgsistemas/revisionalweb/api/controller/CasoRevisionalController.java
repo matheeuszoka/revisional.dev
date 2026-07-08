@@ -6,9 +6,13 @@ import br.com.mpgsistemas.revisionalweb.api.dto.CasoDetalheDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.CasoRequestDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.CasoResumoDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.PaginaResposta;
+import br.com.mpgsistemas.revisionalweb.api.dto.EstatisticasCasosDTO;
+import br.com.mpgsistemas.revisionalweb.api.dto.ProgressoExtracao;
+import br.com.mpgsistemas.revisionalweb.api.dto.ReferenciaMercado;
 import br.com.mpgsistemas.revisionalweb.api.dto.UploadDocumentoDTO;
 import br.com.mpgsistemas.revisionalweb.api.model.CasoRevisional;
 import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
+import br.com.mpgsistemas.revisionalweb.api.security.TenantContext;
 import br.com.mpgsistemas.revisionalweb.api.service.CasoRevisionalService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -72,17 +76,52 @@ public class CasoRevisionalController {
      * Devolve o caso atualizado para o front conferir os dados extraídos.
      */
     @PostMapping(value = "/{id}/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public CasoDetalheDTO upload(@PathVariable Long id,
-                                 @RequestParam("documento") MultipartFile documento,
-                                 @RequestParam(value = "forcarOcr", defaultValue = "false") boolean forcarOcr,
-                                 @AuthenticationPrincipal Usuario auditor) {
-        return CasoDetalheDTO.from(service.processarUpload(id, documento, forcarOcr, auditor));
+    public ResponseEntity<CasoDetalheDTO> upload(@PathVariable Long id,
+                                                 @RequestParam("documento") MultipartFile documento,
+                                                 @RequestParam(value = "forcarOcr", defaultValue = "false") boolean forcarOcr,
+                                                 @AuthenticationPrincipal Usuario auditor) {
+        // Fase síncrona (rápida): arquivo salvo. Extração pesada segue em background;
+        // o front acompanha por GET /{id}/upload/progresso e recarrega ao concluir.
+        CasoRevisionalService.DocumentoAnexado anexo = service.anexarDocumento(id, documento, auditor);
+        service.extrairCamposAsync(id, anexo.bytes(), anexo.nomeOriginal(), forcarOcr, auditor, TenantContext.get());
+        return ResponseEntity.accepted().body(CasoDetalheDTO.from(anexo.caso()));
+    }
+
+    /**
+     * Progresso do upload/extração em andamento (etapa, mensagem, percentual).
+     * O front faz polling aqui enquanto o POST /upload não retorna.
+     */
+    @GetMapping("/{id}/upload/progresso")
+    public ProgressoExtracao progressoUpload(@PathVariable Long id, @AuthenticationPrincipal Usuario auditor) {
+        return service.progressoUpload(id, auditor);
     }
 
     /** Pacote de auditoria pericial do caso (score, matriz de itens, fingerprint, normas). */
     @GetMapping("/{id}/auditoria")
     public AuditPackage auditoria(@PathVariable Long id, @AuthenticationPrincipal Usuario auditor) {
         return service.gerarAuditoria(id, auditor);
+    }
+
+    /** Download standalone do auditoria.json (mesmo conteúdo embutido no ZIP). */
+    @GetMapping("/{id}/auditoria/download")
+    public ResponseEntity<byte[]> auditoriaDownload(@PathVariable Long id, @AuthenticationPrincipal Usuario auditor) {
+        byte[] json = service.gerarAuditoriaJson(id, auditor);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Content-Disposition", "attachment; filename=\"auditoria_caso_" + id + ".json\"")
+                .body(json);
+    }
+
+    /** Taxa média BCB (SGS 25471) para preencher a referência de mercado no front. */
+    @GetMapping("/referencia-bcb")
+    public ReferenciaMercado referenciaBcb() {
+        return service.consultarReferenciaBcb();
+    }
+
+    /** Números do dashboard: casos do auditor autenticado no tenant corrente. */
+    @GetMapping("/estatisticas")
+    public EstatisticasCasosDTO estatisticas(@AuthenticationPrincipal Usuario auditor) {
+        return service.estatisticas(auditor);
     }
 
     /**

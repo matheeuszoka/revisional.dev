@@ -21,9 +21,10 @@ import DownloadIcon from '@mui/icons-material/Download';
 
 import {
     getCaso, criarCaso, atualizarCaso, analisarCaso,
-    uploadDocumento, listarDocumentos, getDocumentoArquivo, getAuditoria, getRelatorio, getPacoteZip,
+    uploadDocumento, getProgressoUpload, listarDocumentos, getDocumentoArquivo, getAuditoria, getAuditoriaJson,
+    getRelatorio, getPacoteZip, getReferenciaBcb,
 } from '../../services/casos';
-import { toastSuccess, toastError, alertValidacao } from '../../services/alerts';
+import { toastSuccess, toastError, alertValidacao, alertProcessando } from '../../services/alerts';
 import { formatCpf, isValidCpf, onlyDigits } from '../../services/cpf';
 import { formatMoeda, numberToMoeda, parseMoeda } from '../../services/moeda';
 
@@ -77,6 +78,7 @@ export default function CasoForm() {
         observacao: '',
     });
     const [analisando, setAnalisando] = useState(false);
+    const [buscandoBcb, setBuscandoBcb] = useState(false);
 
     // --- Auditoria pericial (AuditPackage) ---
     const [auditoria, setAuditoria] = useState(null);
@@ -85,6 +87,7 @@ export default function CasoForm() {
     // --- Relatórios PDF ---
     const [gerandoRel, setGerandoRel] = useState('');
     const [gerandoZip, setGerandoZip] = useState(false);
+    const [gerandoJson, setGerandoJson] = useState(false);
 
     // --- Upload de documento (OCR + IA) ---
     const [enviandoDoc, setEnviandoDoc] = useState(false);
@@ -176,7 +179,12 @@ export default function CasoForm() {
                 setTitulo(caso.titulo || '');
                 aplicarContrato(caso.contrato);
                 aplicarMercado(caso.mercado);
-                if (caso.resultado) setResultado(caso.resultado);
+                if (caso.resultado) {
+                    setResultado(caso.resultado);
+                    // Auditoria é determinística (recalculada do caso): carrega junto
+                    // para o painel já aparecer preenchido ao abrir o caso.
+                    try { setAuditoria(await getAuditoria(id)); } catch { /* botão permite recarregar */ }
+                }
                 carregarDocumentos();
             } finally {
                 setLoading(false);
@@ -185,20 +193,66 @@ export default function CasoForm() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id, editando]);
 
+    // Acompanha a extração em background (upload devolve 202 e o back processa
+    // fora da request). Resolve com o progresso final (CONCLUIDO ou ERRO).
+    const aguardarExtracao = (painel, prefixo = '') => new Promise((resolve) => {
+        const LIMITE_TICKS = 1125; // ~15min a 800ms: solta o painel se o back sumir
+        let ticks = 0;
+        const t = setInterval(async () => {
+            try {
+                const p = await getProgressoUpload(id);
+                if (p?.terminado) {
+                    clearInterval(t);
+                    resolve(p);
+                    return;
+                }
+                if (p?.mensagem) {
+                    painel.update(prefixo + (p.percentual != null ? `${p.mensagem} (${p.percentual}%)` : p.mensagem));
+                }
+            } catch {
+                // silencioso: uma falha de poll não cancela o processamento
+            }
+            if (++ticks >= LIMITE_TICKS) {
+                clearInterval(t);
+                resolve({ etapa: 'ERRO', erro: 'Tempo limite excedido aguardando o processamento.' });
+            }
+        }, 800);
+    });
+
     const handleUpload = async (e) => {
-        const arquivo = e.target.files?.[0];
+        const arquivos = Array.from(e.target.files || []);
         if (fileRef.current) fileRef.current.value = '';
-        if (!arquivo) return;
+        if (!arquivos.length) return;
         setEnviandoDoc(true);
+        const painel = alertProcessando({
+            title: arquivos.length > 1 ? 'Processando documentos' : 'Processando documento',
+            text: `Enviando "${arquivos[0].name}"…`,
+        });
         try {
-            const caso = await uploadDocumento(id, arquivo, forcarOcr);
+            // Lote sequencial: cada arquivo passa pelo mesmo funil OCR+IA do back.
+            for (let i = 0; i < arquivos.length; i++) {
+                const prefixo = arquivos.length > 1 ? `Documento ${i + 1}/${arquivos.length} — ` : '';
+                painel.update(`${prefixo}Enviando "${arquivos[i].name}"…`);
+                await uploadDocumento(id, arquivos[i], forcarOcr); // 202: extração segue no back
+                const fim = await aguardarExtracao(painel, prefixo);
+                if (fim?.etapa === 'ERRO') {
+                    throw new Error(fim.erro || 'Falha ao processar o documento.');
+                }
+            }
+            // Extração terminou: recarrega o caso para refletir os campos preenchidos.
+            const caso = await getCaso(id);
             aplicarContrato(caso.contrato);
             if (caso.resultado) setResultado(caso.resultado);
             carregarDocumentos();
-            toastSuccess('Documento processado. Confira os campos extraídos antes de analisar.');
+            painel.close();
+            toastSuccess(arquivos.length > 1
+                ? 'Documentos processados. Confira os campos extraídos antes de analisar.'
+                : 'Documento processado. Confira os campos extraídos antes de analisar.');
         } catch (err) {
-            const msg = err.response?.data?.message || err.response?.data?.error;
+            const msg = err.response?.data?.message || err.response?.data?.error || err.message;
+            painel.close();
             toastError(msg || 'Falha ao processar o documento.');
+            carregarDocumentos(); // arquivos já enviados ficam salvos mesmo com falha de extração
         } finally {
             setEnviandoDoc(false);
         }
@@ -251,19 +305,70 @@ export default function CasoForm() {
         }
         const mercadoPayload = montarMercado();
         setAnalisando(true);
+        const painel = alertProcessando({ title: 'Analisando contrato', text: 'Preparando análise…' });
+        // Progresso real do back (BCB → cálculo → auditoria) enquanto o POST roda.
+        const poll = setInterval(async () => {
+            try {
+                const p = await getProgressoUpload(id);
+                if (p?.mensagem && !p.terminado) {
+                    painel.update(p.percentual != null ? `${p.mensagem} (${p.percentual}%)` : p.mensagem);
+                }
+            } catch {
+                // silencioso: progresso é cosmético
+            }
+        }, 800);
         try {
             // Salva o contrato antes de analisar, garantindo consistência com o que foi auditado.
             await atualizarCaso(id, { titulo: titulo.trim(), contrato: montarContrato() });
             const caso = await analisarCaso(id, { contrato: montarContrato(), mercado: mercadoPayload, usarBcb });
             setResultado(caso.resultado);
             aplicarMercado(caso.mercado); // reflete taxa BCB buscada ou o que foi salvo
-            setAuditoria(null); // invalida auditoria antiga; gere de novo sobre o novo resultado
+            // Recarrega a auditoria sobre o novo resultado — painel fica sempre atual.
+            try { setAuditoria(await getAuditoria(id)); } catch { setAuditoria(null); }
+            clearInterval(poll);
+            painel.close();
             toastSuccess('Análise concluída.');
         } catch (err) {
             const msg = err.response?.data?.message || err.response?.data?.error;
+            clearInterval(poll);
+            painel.close();
             toastError(msg || 'Falha ao executar a análise.');
         } finally {
+            clearInterval(poll);
             setAnalisando(false);
+        }
+    };
+
+    // Preenche a referência de mercado com a última taxa média do BCB (SGS 25471).
+    const handleBuscarBcb = async () => {
+        setBuscandoBcb(true);
+        try {
+            aplicarMercado(await getReferenciaBcb());
+            toastSuccess('Taxa média do BCB preenchida na referência de mercado.');
+        } catch {
+            /* interceptor mostra toast */
+        } finally {
+            setBuscandoBcb(false);
+        }
+    };
+
+    // Baixa o auditoria.json standalone (mesmo conteúdo embutido no ZIP).
+    const handleAuditoriaJson = async () => {
+        setGerandoJson(true);
+        try {
+            const blob = await getAuditoriaJson(id);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `auditoria_caso_${id}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch {
+            toastError('Falha ao baixar o auditoria.json.');
+        } finally {
+            setGerandoJson(false);
         }
     };
 
@@ -375,6 +480,7 @@ export default function CasoForm() {
                                 ref={fileRef}
                                 type="file"
                                 hidden
+                                multiple
                                 accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.txt"
                                 onChange={handleUpload}
                             />
@@ -391,7 +497,7 @@ export default function CasoForm() {
                                 label="Forçar OCR (PDF escaneado)"
                             />
                             <Typography variant="caption" color="text.secondary">
-                                PDF, imagem ou TXT. A extração preenche só os campos vazios.
+                                PDF, imagem ou TXT (vários de uma vez). A extração preenche só os campos vazios.
                             </Typography>
                         </Stack>
 
@@ -544,10 +650,20 @@ export default function CasoForm() {
                         <Grid size={{ xs: 12 }}><TextField label="Observação" fullWidth value={mercado.observacao} onChange={setMercadoCampo('observacao')} placeholder="Ex: print/consulta oficial anexada, fonte alternativa, etc." /></Grid>
                     </Grid>
                     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} justifyContent="space-between" sx={{ mt: 2 }}>
-                        <FormControlLabel
-                            control={<Checkbox checked={usarBcb} onChange={(e) => setUsarBcb(e.target.checked)} />}
-                            label="Buscar taxa no BCB (SGS 25471) quando sem taxa manual"
-                        />
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+                            <FormControlLabel
+                                control={<Checkbox checked={usarBcb} onChange={(e) => setUsarBcb(e.target.checked)} />}
+                                label="Buscar taxa no BCB (SGS 25471) quando sem taxa manual"
+                            />
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={handleBuscarBcb}
+                                disabled={buscandoBcb || analisando}
+                            >
+                                {buscandoBcb ? <CircularProgress size={18} /> : 'Buscar taxa BCB agora'}
+                            </Button>
+                        </Stack>
                         <Button
                             variant="contained"
                             color="secondary"
@@ -689,28 +805,73 @@ export default function CasoForm() {
 
                     {auditoria && (
                         <Box sx={{ mt: 2 }}>
-                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={3} alignItems={{ sm: 'center' }} sx={{ mb: 2 }}>
-                                <Box sx={{ textAlign: 'center', minWidth: 120 }}>
-                                    <Typography variant="caption" color="text.secondary">Score de conformidade</Typography>
-                                    <Typography variant="h2" fontWeight={800} sx={{ color: scoreColor(auditoria.score), lineHeight: 1 }}>
-                                        {auditoria.score}
+                            <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems={{ md: 'center' }} sx={{ mb: 2.5 }}>
+                                {/* Gauge circular do score */}
+                                <Box sx={{ textAlign: 'center', minWidth: 150 }}>
+                                    <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+                                        <CircularProgress variant="determinate" value={100} size={120} thickness={4.5}
+                                            sx={{ color: 'grey.200' }} />
+                                        <CircularProgress variant="determinate" value={Math.max(0, Math.min(100, auditoria.score || 0))}
+                                            size={120} thickness={4.5}
+                                            sx={{ color: scoreColor(auditoria.score), position: 'absolute', left: 0 }} />
+                                        <Box sx={{
+                                            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                                            alignItems: 'center', justifyContent: 'center',
+                                        }}>
+                                            <Typography variant="h4" fontWeight={800} sx={{ color: scoreColor(auditoria.score), lineHeight: 1 }}>
+                                                {auditoria.score}
+                                            </Typography>
+                                            <Typography variant="caption" color="text.secondary">de 100</Typography>
+                                        </Box>
+                                    </Box>
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                                        Score de conformidade
                                     </Typography>
-                                    <Typography variant="caption" color="text.secondary">de 100</Typography>
                                 </Box>
-                                <Box sx={{ minWidth: 0 }}>
-                                    <Typography variant="body2" color="text.secondary">
-                                        Fingerprint do cálculo: <code>{auditoria.calculationFingerprint?.slice(0, 16)}…</code>
-                                    </Typography>
-                                    <Typography variant="body2" color="text.secondary">
-                                        Snapshot de entrada: <code>{auditoria.inputSnapshotHash?.slice(0, 16)}…</code>
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                        Versão {auditoria.softwareVersion} · {auditoria.items?.length || 0} itens auditados
-                                    </Typography>
-                                </Box>
+
+                                {/* Resumo por status */}
+                                <Grid container spacing={1.5} sx={{ flex: 1 }}>
+                                    {(() => {
+                                        const its = auditoria.items || [];
+                                        const resumo = [
+                                            { rotulo: 'Conformes', qtd: its.filter((i) => i.status === 'OK').length, cor: 'success.main' },
+                                            { rotulo: 'Em atenção', qtd: its.filter((i) => i.status !== 'OK' && i.status !== 'PENDENTE').length, cor: 'warning.main' },
+                                            { rotulo: 'Pendentes', qtd: its.filter((i) => i.status === 'PENDENTE').length, cor: 'error.main' },
+                                        ];
+                                        return resumo.map((r) => (
+                                            <Grid size={{ xs: 4 }} key={r.rotulo}>
+                                                <Paper variant="outlined" sx={{ p: 1.5, textAlign: 'center', borderRadius: 2, height: '100%' }}>
+                                                    <Typography variant="h5" fontWeight={800} sx={{ color: r.cor, lineHeight: 1.2 }}>
+                                                        {r.qtd}
+                                                    </Typography>
+                                                    <Typography variant="caption" color="text.secondary">{r.rotulo}</Typography>
+                                                </Paper>
+                                            </Grid>
+                                        ));
+                                    })()}
+                                    <Grid size={{ xs: 12 }}>
+                                        <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                                            <Typography variant="body2" color="text.secondary" noWrap>
+                                                Fingerprint do cálculo:{' '}
+                                                <Tooltip title={auditoria.calculationFingerprint || ''}>
+                                                    <code>{auditoria.calculationFingerprint?.slice(0, 16)}…</code>
+                                                </Tooltip>
+                                            </Typography>
+                                            <Typography variant="body2" color="text.secondary" noWrap>
+                                                Snapshot de entrada:{' '}
+                                                <Tooltip title={auditoria.inputSnapshotHash || ''}>
+                                                    <code>{auditoria.inputSnapshotHash?.slice(0, 16)}…</code>
+                                                </Tooltip>
+                                            </Typography>
+                                            <Typography variant="caption" color="text.secondary">
+                                                Versão {auditoria.softwareVersion} · {auditoria.items?.length || 0} itens auditados
+                                            </Typography>
+                                        </Paper>
+                                    </Grid>
+                                </Grid>
                             </Stack>
 
-                            <TableContainer component={Box} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+                            <TableContainer component={Box} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflowX: 'auto' }}>
                                 <Table size="small">
                                     <TableHead>
                                         <TableRow sx={{ bgcolor: '#f7f9fc' }}>
@@ -722,10 +883,11 @@ export default function CasoForm() {
                                     </TableHead>
                                     <TableBody>
                                         {auditoria.items?.map((it) => (
-                                            <TableRow key={it.codigo} hover>
+                                            <TableRow key={it.codigo} hover
+                                                sx={{ '&:nth-of-type(even)': { bgcolor: '#fafbfd' } }}>
                                                 <TableCell sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{it.codigo}</TableCell>
-                                                <TableCell>{it.item}</TableCell>
-                                                <TableCell>
+                                                <TableCell sx={{ fontWeight: 500 }}>{it.item}</TableCell>
+                                                <TableCell sx={{ whiteSpace: 'nowrap' }}>
                                                     <Chip size="small" label={it.status} color={statusColor(it.status)} variant="outlined" />
                                                     {it.severidade && it.severidade !== 'ok' && (
                                                         <Chip size="small" label={it.severidade} color={sevColor(it.severidade)} sx={{ ml: 0.5 }} />
@@ -781,6 +943,14 @@ export default function CasoForm() {
                             disabled={gerandoZip || !!gerandoRel}
                         >
                             Baixar pacote (ZIP)
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            startIcon={gerandoJson ? <CircularProgress size={18} /> : <DownloadIcon />}
+                            onClick={handleAuditoriaJson}
+                            disabled={gerandoJson}
+                        >
+                            auditoria.json
                         </Button>
                     </Stack>
                 </Paper>

@@ -12,6 +12,16 @@ export const analisarCaso = async (id, payload) => (await api.post(`/casos/${id}
 // Pacote de auditoria pericial (score, matriz de itens, fingerprint, normas).
 export const getAuditoria = async (id) => (await api.get(`/casos/${id}/auditoria`)).data;
 
+// auditoria.json standalone (Blob p/ download).
+export const getAuditoriaJson = async (id) =>
+    (await api.get(`/casos/${id}/auditoria/download`, { responseType: 'blob' })).data;
+
+// Taxa média BCB (SGS 25471) para preencher a referência de mercado.
+export const getReferenciaBcb = async () => (await api.get('/casos/referencia-bcb')).data;
+
+// Números do dashboard (total, laudoPronto, emAnalise, indicioForte, indicioModerado).
+export const getEstatisticas = async () => (await api.get('/casos/estatisticas')).data;
+
 // Laudo PDF (Blob). tipo: parecer | gerencial | notificacao | elementos.
 export const getRelatorio = async (id, tipo) =>
     (await api.get(`/casos/${id}/relatorio/${tipo}`, { responseType: 'blob' })).data;
@@ -19,6 +29,9 @@ export const getRelatorio = async (id, tipo) =>
 // Pacote ZIP do caso (4 PDFs + auditoria.json).
 export const getPacoteZip = async (id) =>
     (await api.get(`/casos/${id}/pacote`, { responseType: 'blob' })).data;
+
+// Progresso do upload/extração em andamento (etapa, mensagem, percentual) — polling.
+export const getProgressoUpload = async (id) => (await api.get(`/casos/${id}/upload/progresso`)).data;
 
 // Anexa documento (PDF/imagem/TXT). Extração OCR + IA preenche campos vazios no back.
 export const uploadDocumento = async (id, arquivo, forcarOcr = false) => {

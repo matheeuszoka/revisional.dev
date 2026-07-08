@@ -53,6 +53,30 @@ export const confirmAcao = async ({
     return result.isConfirmed;
 };
 
+// Painel de progresso (spinner + mensagem atualizável). O chamador alimenta
+// update() com o progresso real do back (polling). Retorna { close, update }.
+export const alertProcessando = ({ title = 'Processando…', text = '' } = {}) => {
+    Swal.fire({
+        title,
+        html: '<span></span>',
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        showConfirmButton: false,
+        didOpen: () => {
+            Swal.showLoading();
+            const el = Swal.getHtmlContainer();
+            if (el) el.textContent = text;
+        },
+    });
+    return {
+        close: () => Swal.close(),
+        update: (mensagem) => {
+            const el = Swal.getHtmlContainer();
+            if (el) el.textContent = mensagem;
+        },
+    };
+};
+
 export const confirmExclusao = ({ text = 'Esta ação não pode ser desfeita.', title = 'Confirmar exclusão' } = {}) =>
     confirmAcao({ title, text, icon: 'warning', confirmButtonText: 'Excluir', danger: true });
 

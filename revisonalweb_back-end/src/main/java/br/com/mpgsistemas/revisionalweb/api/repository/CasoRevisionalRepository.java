@@ -28,4 +28,25 @@ public interface CasoRevisionalRepository extends JpaRepository<CasoRevisional, 
 
     @Query(value = "select c.* " + FILTRO_CASOS, countQuery = "select count(*) " + FILTRO_CASOS, nativeQuery = true)
     Page<CasoRevisional> buscarPagina(Long tenantId, String cpf, String q, Boolean comResultado, Pageable pageable);
+
+    /** Projeção dos números do dashboard (aliases citados preservam camelCase). */
+    interface EstatisticasCasos {
+        long getTotal();
+        long getLaudoPronto();
+        long getIndicioForte();
+        long getIndicioModerado();
+    }
+
+    // Números do dashboard. Nativa (lê classificação dentro do JSONB resultado) —
+    // tenant/owner explícitos, mesmo padrão do FILTRO_CASOS acima.
+    @Query(value = """
+            select count(*)             as "total",
+                   count(c.resultado)   as "laudoPronto",
+                   count(*) filter (where c.resultado ->> 'classificacaoRisco' ilike 'Indicio tecnico forte%')    as "indicioForte",
+                   count(*) filter (where c.resultado ->> 'classificacaoRisco' ilike 'Indicio tecnico moderado%') as "indicioModerado"
+            from table_caso_revisional c
+            where c.tenant_id = :tenantId
+              and c.owner_cpf = :cpf
+            """, nativeQuery = true)
+    EstatisticasCasos estatisticas(Long tenantId, String cpf);
 }

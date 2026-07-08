@@ -35,14 +35,27 @@ public class ExtractorService {
         this.config = config;
     }
 
+    /** Notificado a cada página processada pelo OCR (página atual, total). */
+    @FunctionalInterface
+    public interface ProgressoPagina {
+        void pagina(int atual, int total);
+    }
+
+    private static final ProgressoPagina SEM_PROGRESSO = (atual, total) -> {
+    };
+
     public ResultadoExtracao extrair(byte[] bytes, String nomeArquivo, boolean forcarOcr) {
+        return extrair(bytes, nomeArquivo, forcarOcr, SEM_PROGRESSO);
+    }
+
+    public ResultadoExtracao extrair(byte[] bytes, String nomeArquivo, boolean forcarOcr, ProgressoPagina progresso) {
         ConfiguracaoSistema cfg = config.carregar();
         String ext = extensao(nomeArquivo);
         if ("txt".equals(ext)) {
             return new ResultadoExtracao(new String(bytes, StandardCharsets.UTF_8), "txt_utf8", 1, "");
         }
         if ("pdf".equals(ext)) {
-            return extrairPdf(bytes, forcarOcr, cfg);
+            return extrairPdf(bytes, forcarOcr, cfg, progresso);
         }
         if (IMAGENS.contains(ext)) {
             return new ResultadoExtracao(ocrImagem(bytes, cfg), "ocr_image_tesseract", 1, "");
@@ -51,7 +64,8 @@ public class ExtractorService {
                 "Formato não suportado. Use PDF, JPG, JPEG, PNG, TIF, BMP ou TXT.");
     }
 
-    private ResultadoExtracao extrairPdf(byte[] bytes, boolean forcarOcr, ConfiguracaoSistema cfg) {
+    private ResultadoExtracao extrairPdf(byte[] bytes, boolean forcarOcr, ConfiguracaoSistema cfg,
+                                         ProgressoPagina progresso) {
         StringBuilder avisos = new StringBuilder();
         String texto = "";
         int paginas = 0;
@@ -71,7 +85,7 @@ public class ExtractorService {
 
             if (forcarOcr || normalizar(texto).length() < LIMIAR_TEXTO_OCR) {
                 try {
-                    String ocr = ocrPdf(doc, cfg);
+                    String ocr = ocrPdf(doc, cfg, progresso);
                     if (normalizar(ocr).length() > normalizar(texto).length()) {
                         return new ResultadoExtracao(ocr, "ocr_pdf_tesseract", paginas, avisos.toString());
                     }
@@ -89,13 +103,14 @@ public class ExtractorService {
         return new ResultadoExtracao(texto, "pdfbox_text", paginas, avisos.toString());
     }
 
-    private String ocrPdf(PDDocument doc, ConfiguracaoSistema cfg) throws Exception {
+    private String ocrPdf(PDDocument doc, ConfiguracaoSistema cfg, ProgressoPagina progresso) throws Exception {
         Tesseract t = novoTesseract(cfg);
         PDFRenderer renderer = new PDFRenderer(doc);
         int dpi = cfg.getOcrDpi() != null ? cfg.getOcrDpi() : 300;
         int total = Math.min(doc.getNumberOfPages(), cfg.getOcrMaxPaginas() != null ? cfg.getOcrMaxPaginas() : 25);
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < total; i++) {
+            progresso.pagina(i + 1, total);
             BufferedImage img = renderer.renderImageWithDPI(i, dpi, ImageType.RGB);
             sb.append(t.doOCR(img)).append("\n");
         }

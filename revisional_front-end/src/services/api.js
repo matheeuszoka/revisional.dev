@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getSessionToken, isTokenValid, removeSessionToken } from './auth';
+import { getSessionToken, getDecodedToken, setSessionToken, isTokenValid, removeSessionToken } from './auth';
 import { toastError } from './alerts';
 
 const api = axios.create({
@@ -24,9 +24,32 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// --- Renovação de sessão (sliding): se o token expira em < 30min, renova em
+// background no próximo uso da API. Single-flight (uma renovação por vez);
+// o back preserva a sessão única (novo token substitui token_ativo).
+let refreshEmAndamento = null;
+const REFRESH_LIMIAR_MS = 30 * 60 * 1000;
+
+const renovarSeNecessario = (urlOriginal) => {
+    if (urlOriginal?.includes('/auth/')) return; // evita loop no próprio refresh/login
+    const decoded = getDecodedToken();
+    if (!decoded?.exp) return;
+    const restanteMs = decoded.exp * 1000 - Date.now();
+    if (restanteMs > REFRESH_LIMIAR_MS || restanteMs <= 0) return;
+    if (!refreshEmAndamento) {
+        refreshEmAndamento = api.post('/auth/refresh', null, { skipGlobalError: true })
+            .then((r) => { if (r.data?.token) setSessionToken(r.data.token); })
+            .catch(() => { /* renovação é best-effort; 401 real cai no fluxo de logout */ })
+            .finally(() => { refreshEmAndamento = null; });
+    }
+};
+
 // Response: 401 → logout e redireciona; demais erros → toast global
 api.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        renovarSeNecessario(response.config?.url);
+        return response;
+    },
     async (error) => {
         if (axios.isCancel(error)) return Promise.reject(error);
 

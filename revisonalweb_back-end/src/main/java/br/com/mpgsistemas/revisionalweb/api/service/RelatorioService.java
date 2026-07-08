@@ -52,6 +52,15 @@ public class RelatorioService {
         this.normas = normas;
     }
 
+    /** Serializa o pacote de auditoria em JSON identado (mesmo formato do ZIP). */
+    public byte[] auditoriaJson(AuditPackage audit) {
+        try {
+            return jsonMapper.writeValueAsBytes(audit);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Falha ao gerar o auditoria.json.", e);
+        }
+    }
+
     /**
      * Pacote ZIP do caso (port de generate_bundle): os 4 laudos PDF + auditoria.json.
      * Documento único para instruir processo administrativo/judicial.

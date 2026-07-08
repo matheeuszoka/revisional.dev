@@ -5,7 +5,9 @@ import br.com.mpgsistemas.revisionalweb.api.dto.AuditPackage;
 import br.com.mpgsistemas.revisionalweb.api.dto.CasoRequestDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.ReferenciaMercado;
 import br.com.mpgsistemas.revisionalweb.api.dto.DocumentoArquivo;
+import br.com.mpgsistemas.revisionalweb.api.dto.EstatisticasCasosDTO;
 import br.com.mpgsistemas.revisionalweb.api.dto.ResultadoCalculo;
+import br.com.mpgsistemas.revisionalweb.api.dto.ProgressoExtracao;
 import br.com.mpgsistemas.revisionalweb.api.dto.ResultadoExtracao;
 import br.com.mpgsistemas.revisionalweb.api.model.CampoExtraido;
 import br.com.mpgsistemas.revisionalweb.api.model.CasoRevisional;
@@ -23,6 +25,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -48,6 +51,7 @@ public class CasoRevisionalService {
     private final ParserRegexService parserRegex;
     private final UploadDocumentoRepository uploadRepository;
     private final EventoAuditoriaRepository eventoRepository;
+    private final ProgressoExtracaoService progressoExtracao;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public CasoRevisionalService(CasoRevisionalRepository repository,
@@ -60,7 +64,8 @@ public class CasoRevisionalService {
                                  ExtracaoIaService extracaoIa,
                                  ParserRegexService parserRegex,
                                  UploadDocumentoRepository uploadRepository,
-                                 EventoAuditoriaRepository eventoRepository) {
+                                 EventoAuditoriaRepository eventoRepository,
+                                 ProgressoExtracaoService progressoExtracao) {
         this.repository = repository;
         this.calculadora = calculadora;
         this.auditoria = auditoria;
@@ -72,6 +77,7 @@ public class CasoRevisionalService {
         this.parserRegex = parserRegex;
         this.uploadRepository = uploadRepository;
         this.eventoRepository = eventoRepository;
+        this.progressoExtracao = progressoExtracao;
     }
 
     // Colunas reais ordenáveis, mapeadas p/ o nome físico (a listagem usa query
@@ -137,16 +143,20 @@ public class CasoRevisionalService {
                 && mercado.getTaxaAnualPct() == null;
         if (usarBcb && semTaxaManual) {
             try {
+                progressoExtracao.publicar(id, "BCB", "Consultando taxa média de mercado no Banco Central…", 25);
                 mercado = bcbService.consultarTaxaVeiculoPf();
             } catch (BcbService.BcbException ex) {
+                progressoExtracao.falhar(id, "Falha na consulta ao Banco Central.");
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                         ex.getMessage() + " Informe a taxa de referencia manualmente para concluir a analise.");
             }
         }
         caso.setMercado(mercado);
 
+        progressoExtracao.publicar(id, "CALCULO", "Executando motor de cálculo (PRICE, CET, spread)…", 55);
         ResultadoCalculo resultado = calculadora.analisar(contrato, mercado);
         caso.setResultado(resultado);
+        progressoExtracao.publicar(id, "AUDITORIA", "Gerando trilha de auditoria pericial…", 85);
         CasoRevisional salvo = repository.save(caso);
 
         // Trilha de auditoria pericial (espelha app.py ANALYSIS_RUN): registra score,
@@ -159,6 +169,7 @@ public class CasoRevisionalService {
         meta.put("fingerprint", audit.getCalculationFingerprint());
         registrarEvento(salvo, auditor, "ANALYSIS_RUN", meta);
 
+        progressoExtracao.concluir(id);
         return salvo;
     }
 
@@ -166,6 +177,35 @@ public class CasoRevisionalService {
     public AuditPackage gerarAuditoria(Long id, Usuario auditor) {
         CasoRevisional caso = buscar(id, auditor);
         return auditoria.build(caso.getContrato(), caso.getResultado(), caso.getMercado());
+    }
+
+    /** auditoria.json standalone (mesmo conteúdo do ZIP). Registra AUDIT_JSON_DOWNLOAD. */
+    public byte[] gerarAuditoriaJson(Long id, Usuario auditor) {
+        CasoRevisional caso = buscar(id, auditor);
+        AuditPackage audit = auditoria.build(caso.getContrato(), caso.getResultado(), caso.getMercado());
+        byte[] json = relatorio.auditoriaJson(audit);
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("score", audit.getScore());
+        meta.put("fingerprint", audit.getCalculationFingerprint());
+        registrarEvento(caso, auditor, "AUDIT_JSON_DOWNLOAD", meta);
+        return json;
+    }
+
+    /** Números do dashboard (casos do auditor no tenant corrente). */
+    public EstatisticasCasosDTO estatisticas(Usuario auditor) {
+        CasoRevisionalRepository.EstatisticasCasos e =
+                repository.estatisticas(TenantContext.get(), auditor.getCpf());
+        return new EstatisticasCasosDTO(e.getTotal(), e.getLaudoPronto(),
+                e.getTotal() - e.getLaudoPronto(), e.getIndicioForte(), e.getIndicioModerado());
+    }
+
+    /** Consulta avulsa da taxa BCB (preenche a referência de mercado no front). */
+    public ReferenciaMercado consultarReferenciaBcb() {
+        try {
+            return bcbService.consultarTaxaVeiculoPf();
+        } catch (BcbService.BcbException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, ex.getMessage());
+        }
     }
 
     /**
@@ -202,16 +242,26 @@ public class CasoRevisionalService {
      * os campos vazios (preserva o que o operador já conferiu). O arquivo é sempre
      * salvo, mesmo que a extração falhe — registra-se o evento de auditoria.
      */
-    public CasoRevisional processarUpload(Long id, MultipartFile file, boolean forcarOcr, Usuario auditor) {
+    /** Resultado da fase síncrona do upload (arquivo já persistido no MinIO). */
+    public record DocumentoAnexado(CasoRevisional caso, byte[] bytes, String nomeOriginal) {
+    }
+
+    /**
+     * Fase 1 (síncrona): valida, armazena o arquivo no MinIO e registra o
+     * UploadDocumento. Rápida — a extração pesada roda depois em background.
+     */
+    public DocumentoAnexado anexarDocumento(Long id, MultipartFile file, Usuario auditor) {
         CasoRevisional caso = buscar(id, auditor);
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selecione um documento para anexar.");
         }
 
+        progressoExtracao.publicar(id, "ENVIO", "Documento recebido, preparando processamento…", 10);
         byte[] bytes;
         try {
             bytes = file.getBytes();
         } catch (IOException e) {
+            progressoExtracao.falhar(id, "Não foi possível ler o arquivo enviado.");
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Não foi possível ler o arquivo enviado.", e);
         }
 
@@ -219,7 +269,7 @@ public class CasoRevisionalService {
         String hashArquivo = sha256(bytes);
         String objectName = caso.getAuditor().getCpf() + "/" + id + "/" + UUID.randomUUID() + "_" + nomeOriginal;
 
-        // 1) Armazena o documento (sempre).
+        progressoExtracao.publicar(id, "ARMAZENANDO", "Armazenando o documento original…", 20);
         armazenamento.salvar(objectName, bytes, file.getContentType());
 
         UploadDocumento upload = new UploadDocumento();
@@ -232,43 +282,87 @@ public class CasoRevisionalService {
         DadosContrato contrato = caso.getContrato() != null ? caso.getContrato() : new DadosContrato();
         contrato.setContratoArquivo(objectName);
         contrato.setHashContrato(hashArquivo);
+        caso.setContrato(contrato);
 
-        // 2) Extrai texto + estrutura campos (best-effort).
-        Map<String, Object> meta = new LinkedHashMap<>();
-        meta.put("arquivo", nomeOriginal);
+        return new DocumentoAnexado(repository.save(caso), bytes, nomeOriginal);
+    }
+
+    /**
+     * Fase 2 (assíncrona): extração de texto (PDF/OCR) + IA + regex, fundindo só
+     * campos vazios. Roda fora da thread do Tomcat — o front acompanha por polling
+     * do progresso e recarrega o caso quando terminado.
+     *
+     * TenantContext é ThreadLocal: precisa ser setado aqui (thread do executor)
+     * para o filtro @TenantId do Hibernate e a chave do progresso funcionarem.
+     */
+    @Async("extracaoExecutor")
+    public void extrairCamposAsync(Long id, byte[] bytes, String nomeOriginal, boolean forcarOcr,
+                                   Usuario auditor, Long tenantId) {
+        TenantContext.set(tenantId);
         try {
-            ResultadoExtracao extracao = extractor.extrair(bytes, nomeOriginal, forcarOcr);
-            String texto = extracao.texto() != null ? extracao.texto() : "";
-            contrato.setHashTextoExtraido(sha256(texto.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-            contrato.setAmostraTextoExtraido(texto.length() > 2500 ? texto.substring(0, 2500) : texto);
-            contrato.getMetadadosExtracao().put("metodo", extracao.metodo());
-            contrato.getMetadadosExtracao().put("paginas", String.valueOf(extracao.paginas()));
-            contrato.getMetadadosExtracao().put("avisos", extracao.avisos());
+            CasoRevisional caso = repository.findById(id).orElse(null);
+            if (caso == null) {
+                progressoExtracao.falhar(id, "Caso não encontrado.");
+                return;
+            }
+            DadosContrato contrato = caso.getContrato() != null ? caso.getContrato() : new DadosContrato();
 
-            // IA primeiro (melhor qualidade); regex preenche o que faltar. Ambos só vazios.
-            Map<String, CampoExtraido> camposIa = extracaoIa.extrairCampos(texto);
-            List<String> aplicadosIa = MapeadorContrato.aplicar(contrato, camposIa, true);
-            Map<String, CampoExtraido> camposRegex = parserRegex.extrair(texto);
-            List<String> aplicadosRegex = MapeadorContrato.aplicar(contrato, camposRegex, true);
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("arquivo", nomeOriginal);
+            try {
+                progressoExtracao.publicar(id, "EXTRAINDO", "Extraindo texto do documento…", 35);
+                // OCR reporta página a página; faixa 35–60% do progresso total.
+                ResultadoExtracao extracao = extractor.extrair(bytes, nomeOriginal, forcarOcr,
+                        (atual, total) -> progressoExtracao.publicar(id, "OCR",
+                                "OCR na página " + atual + " de " + total + "…",
+                                35 + (int) Math.round(atual * 25.0 / Math.max(total, 1))));
+                String texto = extracao.texto() != null ? extracao.texto() : "";
+                contrato.setHashTextoExtraido(sha256(texto.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                contrato.setAmostraTextoExtraido(texto.length() > 2500 ? texto.substring(0, 2500) : texto);
+                contrato.getMetadadosExtracao().put("metodo", extracao.metodo());
+                contrato.getMetadadosExtracao().put("paginas", String.valueOf(extracao.paginas()));
+                contrato.getMetadadosExtracao().put("avisos", extracao.avisos());
 
-            contrato.getMetadadosExtracao().put("ia", extracaoIa.habilitado() ? "openrouter" : "desativada");
-            contrato.getMetadadosExtracao().put("regex", "ativo");
-            caso.setContrato(contrato);
+                // IA primeiro (melhor qualidade); regex preenche o que faltar. Ambos só vazios.
+                progressoExtracao.publicar(id, "IA", "IA analisando e mapeando os campos do contrato…", 65);
+                Map<String, CampoExtraido> camposIa = extracaoIa.extrairCampos(texto);
+                List<String> aplicadosIa = MapeadorContrato.aplicar(contrato, camposIa, true);
+                progressoExtracao.publicar(id, "REGEX", "Complementando campos com o parser estrutural…", 85);
+                Map<String, CampoExtraido> camposRegex = parserRegex.extrair(texto);
+                List<String> aplicadosRegex = MapeadorContrato.aplicar(contrato, camposRegex, true);
 
-            meta.put("metodo", extracao.metodo());
-            meta.put("camposAplicadosIa", aplicadosIa);
-            meta.put("camposAplicadosRegex", aplicadosRegex);
-            meta.put("totalExtraidoIa", camposIa.size());
-            meta.put("totalExtraidoRegex", camposRegex.size());
-            registrarEvento(caso, auditor, "DOCUMENT_UPLOAD_EXTRACT", meta);
-        } catch (ResponseStatusException e) {
-            // Falha de extração não derruba o upload: arquivo já está salvo.
-            caso.setContrato(contrato);
-            meta.put("erro", e.getReason());
-            registrarEvento(caso, auditor, "DOCUMENT_UPLOAD_ERROR", meta);
+                contrato.getMetadadosExtracao().put("ia", extracaoIa.habilitado() ? "openrouter" : "desativada");
+                contrato.getMetadadosExtracao().put("regex", "ativo");
+                caso.setContrato(contrato);
+
+                meta.put("metodo", extracao.metodo());
+                meta.put("camposAplicadosIa", aplicadosIa);
+                meta.put("camposAplicadosRegex", aplicadosRegex);
+                meta.put("totalExtraidoIa", camposIa.size());
+                meta.put("totalExtraidoRegex", camposRegex.size());
+                registrarEvento(caso, auditor, "DOCUMENT_UPLOAD_EXTRACT", meta);
+            } catch (ResponseStatusException e) {
+                // Falha de extração não derruba o upload: arquivo já está salvo.
+                caso.setContrato(contrato);
+                meta.put("erro", e.getReason());
+                registrarEvento(caso, auditor, "DOCUMENT_UPLOAD_ERROR", meta);
+            }
+
+            progressoExtracao.publicar(id, "SALVANDO", "Consolidando dados extraídos…", 95);
+            repository.save(caso);
+            progressoExtracao.concluir(id);
+        } catch (Exception e) {
+            // LGPD: sem dados do contrato na mensagem de erro.
+            progressoExtracao.falhar(id, "Falha inesperada no processamento do documento.");
+        } finally {
+            TenantContext.clear();
         }
+    }
 
-        return repository.save(caso);
+    /** Progresso corrente do upload/extração do caso (consultado por polling pelo front). */
+    public ProgressoExtracao progressoUpload(Long id, Usuario auditor) {
+        buscar(id, auditor); // valida escopo (tenant + papel)
+        return progressoExtracao.consultar(id);
     }
 
     public List<UploadDocumento> listarDocumentos(Long id, Usuario auditor) {
