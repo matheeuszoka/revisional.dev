@@ -223,12 +223,17 @@ O protótipo Flask/Python `v2.0.0` foi a **referência funcional completa**. A p
 > ⚠️ Manter as regras de código (null safety de OCR, sem números mágicos → `ParametrosSistema`, Service isolado de banco/HTTP, LGPD nos logs).
 
 ### 🔭 Roadmap aberto
-- `docker/`, Dockerfiles, `deploy.yml` (espelhar `sigapsi.dev`).
-- Endpoint dedicado de download `audit.json` (hoje só dentro do ZIP).
 - Testes automatizados (Testcontainers ainda não no `pom.xml`).
-- **TODO — gestão de escritórios pelo SUPER_ADMIN** (tela `/escritorios` já lista/ativa/desativa; falta):
-  - **Criar escritório pelo painel**: botão "Novo escritório" — SUPER_ADMIN cria `Tenant` (nome + CNPJ) + admin inicial do cliente com senha temporária (`forcar_troca_senha`, mesmo fluxo do convite de membros). Substitui o workaround de usar o register público em nome do cliente.
-  - **Editar escritório**: alterar nome/CNPJ de tenant existente (`PUT /api/tenants/{id}`).
+- ✅ ~~`docker/`, Dockerfiles, `deploy.yml`~~ — criados (jul/2026): `docker/docker-compose.prod.yml` (postgres, minio, backend Tomcat11+Tesseract, frontend nginx, apache-proxy SSL, certbot), Dockerfiles multi-stage, `.github/workflows/deploy.yml`, `docker/.env.prod.example`. Vhost usa `${DOMINIO}` do `.env`; bloco 443 dentro de `<IfFile>` (sobe sem cert no bootstrap).
+- Progresso de extração em memória (`ProgressoExtracaoService`): múltiplas instâncias do back exigem sticky session ou Redis.
+
+### ✅ Fechado além do protótipo (jul/2026)
+- **Upload assíncrono com progresso real**: `POST /api/casos/{id}/upload` → **202** (arquivo salvo síncrono; extração OCR+IA em `@Async "extracaoExecutor"`). `ProgressoExtracaoService` (mapa em memória `tenantId:casoId`, TTL 10min) + `GET /{id}/upload/progresso`; OCR publica página a página; `analisar` publica etapas (BCB→cálculo→auditoria). Front: painel SweetAlert com polling 800ms; upload em **lote** (input `multiple`, sequencial).
+- **Gestão de escritórios pelo SUPER_ADMIN**: `POST /api/tenants` (tenant + admin do cliente com senha temporária/`forcar_troca_senha`) e `PUT /api/tenants/{id}` (nome/CNPJ); dialogs na tela `/escritorios`.
+- **audit.json standalone**: `GET /api/casos/{id}/auditoria/download` (evento `AUDIT_JSON_DOWNLOAD`); botão no CasoForm.
+- **Taxa BCB no front**: `GET /api/casos/referencia-bcb` + botão "Buscar taxa BCB agora" preenche a referência de mercado.
+- **Refresh de sessão (sliding)**: `POST /api/auth/refresh` (novo token substitui `token_ativo`); interceptor axios renova quando exp < 30min (single-flight).
+- **Dashboard real**: `GET /api/casos/estatisticas` (total/laudoPronto/emAnalise/indícios via JSONB `classificacaoRisco`) + casos recentes clicáveis.
 
 ## 🔐 Variáveis de Ambiente (`.env`)
 

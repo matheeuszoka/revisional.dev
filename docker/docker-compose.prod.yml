@@ -1,0 +1,105 @@
+# Produção — VPS Debian. Rodar deste diretório: docker compose -f docker-compose.prod.yml up -d --build
+# Variáveis vêm do .env ao lado (copiar de .env.prod.example; NUNCA commitar o .env).
+name: revisional
+
+services:
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks: [revisional]
+
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./data/minio:/data
+    networks: [revisional]
+
+  backend:
+    build: ../revisonalweb_back-end
+    restart: always
+    depends_on:
+      - postgres
+      - minio
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      CONFIG_ENC_SECRET: ${CONFIG_ENC_SECRET}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      # Seed do admin da plataforma (SUPER_ADMIN) — só cria se não existir
+      APP_ADMIN_TENANT: ${APP_ADMIN_TENANT}
+      APP_ADMIN_CPF: ${APP_ADMIN_CPF}
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL}
+      APP_ADMIN_OAB: ${APP_ADMIN_OAB}
+      APP_ADMIN_SENHA: ${APP_ADMIN_SENHA}
+      # IA global opcional (cada tenant pode ter a própria chave pela tela /parametros)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_REFERER: https://${DOMINIO}
+    networks: [revisional]
+
+  frontend:
+    build: ../revisional_front-end
+    restart: always
+    networks: [revisional]
+
+  apache-proxy:
+    image: httpd:alpine
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      # Porta 80 do host: challenge do Let's Encrypt + redirect p/ HTTPS
+      - "80:80"
+      # Externa 8090 → 443 interna do Apache (host compartilhado)
+      - "${PORTA_EXTERNA:-8090}:443"
+    environment:
+      DOMINIO: ${DOMINIO}
+      PORTA_EXTERNA: ${PORTA_EXTERNA:-8090}
+    volumes:
+      - ./apache/vhost.conf:/usr/local/apache2/conf/extra/revisional.conf:ro
+      - ./data/certbot/www:/var/www/certbot
+      - ./data/certbot/conf:/etc/letsencrypt:ro
+    # Habilita módulos de proxy/SSL/rewrite e inclui o vhost antes de subir
+    command: >
+      sh -c "sed -i
+      -e 's/^#\(LoadModule proxy_module\)/\1/'
+      -e 's/^#\(LoadModule proxy_http_module\)/\1/'
+      -e 's/^#\(LoadModule ssl_module\)/\1/'
+      -e 's/^#\(LoadModule rewrite_module\)/\1/'
+      -e 's/^#\(LoadModule socache_shmcb_module\)/\1/'
+      -e 's/^#\(LoadModule headers_module\)/\1/'
+      /usr/local/apache2/conf/httpd.conf;
+      grep -q revisional.conf /usr/local/apache2/conf/httpd.conf
+      || echo 'Include conf/extra/revisional.conf' >> /usr/local/apache2/conf/httpd.conf;
+      exec httpd-foreground"
+    networks: [revisional]
+
+  certbot:
+    image: certbot/certbot
+    restart: always
+    volumes:
+      - ./data/certbot/www:/var/www/certbot
+      - ./data/certbot/conf:/etc/letsencrypt
+    # Loop de renovação (checa 2x/dia; renova quando faltar <30 dias)
+    entrypoint: sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    networks: [revisional]
+
+networks:
+  revisional:
+    driver: bridge
