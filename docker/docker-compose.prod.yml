@@ -50,6 +50,8 @@ services:
       # IA global opcional (cada tenant pode ter a própria chave pela tela /parametros)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_REFERER: https://${DOMINIO}
+      # CORS: origem pública do front (Spring devolve 403 pra Origin desconhecida)
+      APP_CORS_ALLOWED_ORIGINS: https://${DOMINIO}:${PORTA_EXTERNA:-8090}
     networks: [revisional]
 
   frontend:
