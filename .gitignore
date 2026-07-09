@@ -16,6 +16,9 @@ build/
 .env
 .env.local
 
+# Docker (volumes de dados locais)
+docker/data/
+
 # OS
 Thumbs.db
 .DS_Store

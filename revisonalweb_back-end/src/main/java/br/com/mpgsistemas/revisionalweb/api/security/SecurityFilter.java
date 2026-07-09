@@ -1,0 +1,64 @@
+package br.com.mpgsistemas.revisionalweb.api.security;
+
+import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
+import br.com.mpgsistemas.revisionalweb.api.model.UsuarioRole;
+import br.com.mpgsistemas.revisionalweb.api.repository.UsuarioRepository;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+
+@Component
+public class SecurityFilter extends OncePerRequestFilter {
+
+    @Autowired
+    TokenService tokenService;
+
+    @Autowired
+    UsuarioRepository usuarioRepository;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        var token = this.recoverToken(request);
+
+        try {
+            if (token != null) {
+                var cpf = tokenService.validateToken(token);
+                if (StringUtils.hasText(cpf)) {
+                    Usuario usuario = usuarioRepository.findByCpfComTenant(cpf);
+                    // Só autentica se o token for o token ativo (sessão única)
+                    // e o escritório (tenant) não estiver desativado pela plataforma.
+                    if (usuario != null && token.equals(usuario.getTokenAtivo())
+                            && usuario.getTenant().isAtivo()) {
+                        var authentication = new UsernamePasswordAuthenticationToken(
+                                usuario, null, usuario.getAuthorities());
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                        // MULTI-TENANCY: a partir daqui o Hibernate filtra os dados do tenant.
+                        TenantContext.set(usuario.getTenantId());
+                        // SUPER_ADMIN (plataforma) enxerga todos os tenants (sessão root).
+                        TenantContext.setSuperAdmin(usuario.getUsuarioRole() == UsuarioRole.ROLE_SUPER_ADMIN);
+                    }
+                }
+            }
+            filterChain.doFilter(request, response);
+        } finally {
+            // Evita vazar tenant para a próxima requisição que reaproveitar a thread.
+            TenantContext.clear();
+        }
+    }
+
+    private String recoverToken(HttpServletRequest request) {
+        var authHeader = request.getHeader("Authorization");
+        if (authHeader == null) return null;
+        return authHeader.replace("Bearer ", "");
+    }
+}
