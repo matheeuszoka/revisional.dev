@@ -138,6 +138,9 @@ public class ExtractorService {
             t.setDatapath(cfg.getOcrTessdataPath());
         }
         t.setLanguage(cfg.getOcrIdioma() != null ? cfg.getOcrIdioma() : "por");
+        // BufferedImage não carrega DPI até o Tesseract (JNA); sem isso ele assume 70 dpi
+        // ("Invalid resolution 1 dpi") e degrada a segmentação. Informa o DPI do render.
+        t.setVariable("user_defined_dpi", String.valueOf(cfg.getOcrDpi() != null ? cfg.getOcrDpi() : 300));
         return t;
     }
 
