@@ -11,6 +11,7 @@ RUN mvn -q -B clean package -DskipTests
 FROM tomcat:11.0-jdk17
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por \
+       libtesseract-dev libleptonica-dev \
     && rm -rf /var/lib/apt/lists/*
 # Caminho do tessdata no Debian/Ubuntu do container (lido por ocr.tessdata-path)
 ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
