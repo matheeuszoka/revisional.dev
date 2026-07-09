@@ -21,25 +21,28 @@ public class ParserRegexService {
 
     private static final int FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS;
 
+    private static final String NUM_BR = "[0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})|[0-9]+(?:\\.[0-9]{2})";
+
     private static final Map<String, List<String>> CAMPOS_MONETARIOS = new LinkedHashMap<>();
     private static final List<String[]> CAMPOS_PERCENTUAIS = List.of(
-            new String[]{"taxaJurosMensalPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remuneratorios)?\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "juros\\s*(?:a\\.m\\.|ao\\s+mes|mensal)"},
-            new String[]{"taxaJurosAnualPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remuneratorios)?\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "juros\\s*(?:a\\.a\\.|ao\\s+ano|anual)"},
-            new String[]{"cetMensalPct", "cet\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "custo\\s+efetivo\\s+total\\s*(?:mensal|a\\.m\\.)"},
-            new String[]{"cetAnualPct", "cet\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "custo\\s+efetivo\\s+total\\s*(?:anual|a\\.a\\.)"}
+            // Layout tabular de CDC (ex. Santander/Aymoré): "mensal: % a.m.: 1,48%" / "CET % a.m.: 2,63%"
+            new String[]{"taxaJurosMensalPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remunerat[oó]rios)?\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "mensal\\s*:?\\s*%\\s*a\\.m\\.", "juros\\s*(?:a\\.m\\.|ao\\s+mes|mensal)"},
+            new String[]{"taxaJurosAnualPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remunerat[oó]rios)?\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "anual\\s*:?\\s*%\\s*a\\.a\\.", "juros\\s*(?:a\\.a\\.|ao\\s+ano|anual)"},
+            new String[]{"cetMensalPct", "cet\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "cet\\s*%\\s*a\\.m\\.", "custo\\s+efetivo\\s+total\\s*(?:mensal|a\\.m\\.)"},
+            new String[]{"cetAnualPct", "cet\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "cet\\s*%\\s*a\\.a\\.", "custo\\s+efetivo\\s+total\\s*(?:anual|a\\.a\\.)"}
     );
 
     static {
-        CAMPOS_MONETARIOS.put("valorVeiculo", List.of("valor do veiculo", "valor do veículo", "preco do veiculo", "preço do veículo", "valor do bem"));
-        CAMPOS_MONETARIOS.put("valorEntrada", List.of("valor de entrada", "pagamento inicial", "entrada", "sinal"));
-        CAMPOS_MONETARIOS.put("valorFinanciado", List.of("valor financiado", "total financiado", "valor do financiamento", "credito concedido", "crédito concedido"));
+        CAMPOS_MONETARIOS.put("valorVeiculo", List.of("valor do veiculo a vista", "valor do veículo à vista", "valor do veiculo", "valor do veículo", "preco do veiculo", "preço do veículo", "valor do bem"));
+        CAMPOS_MONETARIOS.put("valorEntrada", List.of("valor da entrada", "valor de entrada", "pagamento inicial", "entrada", "sinal"));
+        CAMPOS_MONETARIOS.put("valorFinanciado", List.of("valor total financiado", "valor financiado", "total financiado", "valor do financiamento", "credito concedido", "crédito concedido"));
         CAMPOS_MONETARIOS.put("valorLiquidoLiberado", List.of("valor liquido liberado", "valor líquido liberado", "valor liberado", "credito liquido", "crédito líquido"));
-        CAMPOS_MONETARIOS.put("valorParcela", List.of("valor da parcela", "prestacao", "prestação", "parcela mensal", "valor de cada parcela"));
-        CAMPOS_MONETARIOS.put("iof", List.of("iof", "imposto sobre operacoes financeiras", "imposto sobre operações financeiras"));
+        CAMPOS_MONETARIOS.put("valorParcela", List.of("valor de cada parcela mensal", "valor da parcela", "prestacao", "prestação", "parcela mensal", "valor de cada parcela"));
+        CAMPOS_MONETARIOS.put("iof", List.of("iof", "total de impostos a serem financiados", "imposto sobre operacoes financeiras", "imposto sobre operações financeiras"));
         CAMPOS_MONETARIOS.put("tarifaCadastro", List.of("tarifa de cadastro", "tarifa cadastro", "cadastro"));
-        CAMPOS_MONETARIOS.put("tarifaAvaliacaoBem", List.of("avaliacao do bem", "avaliação do bem", "tarifa de avaliacao", "tarifa de avaliação"));
-        CAMPOS_MONETARIOS.put("tarifaRegistroContrato", List.of("registro de contrato", "tarifa de registro", "despesa de registro"));
-        CAMPOS_MONETARIOS.put("gravame", List.of("registro de gravame", "gravame"));
+        CAMPOS_MONETARIOS.put("tarifaAvaliacaoBem", List.of("tarifa de avaliacao de bem", "tarifa de avaliação de bem", "avaliacao do bem", "avaliação do bem", "tarifa de avaliacao", "tarifa de avaliação"));
+        CAMPOS_MONETARIOS.put("tarifaRegistroContrato", List.of("registro de contrato", "registro contrato", "tarifa de registro", "despesa de registro"));
+        CAMPOS_MONETARIOS.put("gravame", List.of("registro de gravame", "gravame", "orgao de transito", "órgão de trânsito"));
         CAMPOS_MONETARIOS.put("seguro", List.of("seguro prestamista", "seguro protecao financeira", "seguro proteção financeira", "seguro"));
         CAMPOS_MONETARIOS.put("outrosEncargos", List.of("outros encargos", "outras despesas", "servicos de terceiros", "serviços de terceiros"));
     }
@@ -71,8 +74,10 @@ public class ParserRegexService {
             }
         }
 
-        // Instituição financeira
+        // Instituição financeira (financeiras de montadora/varejo não começam com "BANCO",
+        // ex. "AYMORÉ CRÉDITO, FINANCIAMENTO E INVESTIMENTO S.A.")
         for (String pat : List.of(
+                "\\b([\\p{Lu}][\\p{Lu}\\s]{1,60}CR[EÉ]DITO,?\\s+FINANCIAMENTO\\s+E\\s+INVESTIMENTO\\s+S\\.?A\\.?)",
                 "\\b(BANCO\\s+[^\\n,;]{3,90})",
                 "\\b(COOPERATIVA\\s+[^\\n,;]{3,90})",
                 "(?:instituicao financeira|instituição financeira|credor|cedente)\\s*[:\\-]?\\s*([^\\n,;]{3,90})")) {
@@ -85,21 +90,34 @@ public class ParserRegexService {
             }
         }
 
-        // Número do contrato
-        achar(norm, "(?:contrato|cedula|c[eé]dula|ccb|proposta)\\s*(?:n[oº°\\.]?|numero|número)?\\s*[:\\-]?\\s*([A-Z0-9][A-Z0-9\\.\\-/]{4,40})",
+        // Número do contrato ("OPERAÇÃO Nº 104925128/00695937871" no CDC Santander)
+        achar(norm, "(?:contrato|cedula|c[eé]dula|ccb|proposta|opera[cç][aã]o)\\s*(?:n[oº°\\.]?|numero|número)?\\s*[:\\-]?\\s*([A-Z0-9][A-Z0-9\\.\\-/]{4,40})",
                 m -> add(out, "contratoNumero", m.group(1), 0.80, m.group(0)));
 
-        // Data do contrato
+        // Data do contrato. "Data:" seca (rodapé de assinatura) antes do fallback: a primeira
+        // data solta do doc costuma ser o 1º vencimento, não a contratação.
         Matcher dt = Pattern.compile("(?:data\\s*(?:do\\s*)?(?:contrato|emissao|emissão|contratacao|contratação)|contratado\\s+em)\\s*[:\\-]?\\s*(\\d{2}/\\d{2}/\\d{4})", FLAGS).matcher(raw);
         if (dt.find()) {
             add(out, "dataContrato", dt.group(1), 0.75, dt.group(0));
         } else {
-            Matcher dt2 = Pattern.compile("\\b(\\d{2}/\\d{2}/\\d{4})\\b").matcher(raw);
-            if (dt2.find()) add(out, "dataContrato", dt2.group(1), 0.60, dt2.group(0));
+            Matcher dt1 = Pattern.compile("\\bdata\\s*:\\s*(\\d{2}/\\d{2}/\\d{4})", FLAGS).matcher(raw);
+            if (dt1.find()) {
+                add(out, "dataContrato", dt1.group(1), 0.70, dt1.group(0));
+            } else {
+                Matcher dt2 = Pattern.compile("\\b(\\d{2}/\\d{2}/\\d{4})\\b").matcher(raw);
+                if (dt2.find()) add(out, "dataContrato", dt2.group(1), 0.60, dt2.group(0));
+            }
         }
 
-        // Descrição do veículo
-        for (String pat : List.of(
+        // Descrição do veículo. Campos "Marca:"/"Modelo:" separados (layout tabular) primeiro:
+        // composição limpa sem arrastar rótulos vizinhos.
+        Matcher mm = Pattern.compile("marca\\s*:\\s*([^\\n:]{2,40}?)\\s+modelo\\s*:\\s*([^\\n]{2,80})", FLAGS).matcher(norm);
+        if (mm.find()) {
+            String desc = (mm.group(1).strip() + " " + mm.group(2).strip()).replaceAll("\\s+", " ");
+            desc = desc.split("(?i)\\s+(ano/?modelo|placa|renavam|chassi|cor|combust[ií]vel|valor)\\b")[0].strip();
+            add(out, "veiculoDescricao", desc, 0.80, mm.group(0));
+        }
+        for (String pat : out.containsKey("veiculoDescricao") ? List.<String>of() : List.of(
                 "(?:ve[ií]culo|bem)\\s*[:=]\\s*([^\\n\\r]{4,140})",
                 "(?:descri[cç][aã]o\\s+do\\s+(?:ve[ií]culo|bem))\\s*[:=]\\s*([^\\n\\r]{4,140})")) {
             Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
@@ -111,22 +129,31 @@ public class ParserRegexService {
             }
         }
 
-        // Valores monetários por rótulo
+        // Valores monetários por rótulo. Duas tentativas por rótulo:
+        // 1) estrita: valor logo após o rótulo;
+        // 2) tolerante: layouts tabulares (CDC Santander etc.) intercalam parênteses de fórmula
+        //    "(E.1 + E.4)" e checkboxes "Isenta: sim não Financiada: sim não" entre rótulo e valor —
+        //    pula parênteses e até 60 chars sem dígito, mas exige "R$" para ancorar no valor certo.
         CAMPOS_MONETARIOS.forEach((campo, labels) -> {
             for (String label : labels) {
-                String pat = "(" + Pattern.quote(label) + ")\\s*[:\\-=]?\\s*(?:R\\$\\s*)?"
-                        + "([0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})|[0-9]+(?:\\.[0-9]{2}))";
-                Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
+                String estrito = "(" + Pattern.quote(label) + ")\\s*[:\\-=]?\\s*(?:R\\$\\s*)?(" + NUM_BR + ")";
+                Matcher m = Pattern.compile(estrito, FLAGS).matcher(raw);
                 if (m.find()) {
                     add(out, campo, m.group(2), 0.86, m.group(0));
-                    break;
+                    return;
+                }
+                String tolerante = "(" + Pattern.quote(label) + ")(?:\\s*\\([^)]{0,80}\\))*[^0-9]{0,60}?R\\$\\s*(" + NUM_BR + ")";
+                m = Pattern.compile(tolerante, FLAGS).matcher(raw);
+                if (m.find()) {
+                    add(out, campo, m.group(2), 0.80, m.group(0));
+                    return;
                 }
             }
         });
 
         // Prazo (meses)
         for (String pat : List.of(
-                "(?:prazo|quantidade\\s+de\\s+parcelas|numero\\s+de\\s+parcelas|n[uú]mero\\s+de\\s+parcelas)\\s*[:\\-]?\\s*(\\d{1,3})\\s*(?:meses|parcelas)?",
+                "(?:prazo|(?:quantidade|numero|n[uú]mero)\\s+de\\s+parcelas(?:\\s+mensais)?)\\s*[:\\-]?\\s*(\\d{1,3})\\s*(?:meses|parcelas)?",
                 "(\\d{1,3})\\s*(?:parcelas\\s+mensais|presta[cç][oõ]es\\s+mensais)")) {
             Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
             if (m.find()) {
