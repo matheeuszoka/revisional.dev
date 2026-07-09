@@ -75,15 +75,16 @@ services:
       - ./apache/vhost.conf:/usr/local/apache2/conf/extra/revisional.conf:ro
       - ./data/certbot/www:/var/www/certbot
       - ./data/certbot/conf:/etc/letsencrypt:ro
-    # Habilita módulos de proxy/SSL/rewrite e inclui o vhost antes de subir
+    # Habilita módulos de proxy/SSL/rewrite e inclui o vhost antes de subir.
+    # Sem backreference no sed: o compose remove as contrabarras do comando.
     command: >
       sh -c "sed -i
-      -e 's/^#\(LoadModule proxy_module\)/\1/'
-      -e 's/^#\(LoadModule proxy_http_module\)/\1/'
-      -e 's/^#\(LoadModule ssl_module\)/\1/'
-      -e 's/^#\(LoadModule rewrite_module\)/\1/'
-      -e 's/^#\(LoadModule socache_shmcb_module\)/\1/'
-      -e 's/^#\(LoadModule headers_module\)/\1/'
+      -e 's/^#LoadModule proxy_module/LoadModule proxy_module/'
+      -e 's/^#LoadModule proxy_http_module/LoadModule proxy_http_module/'
+      -e 's/^#LoadModule ssl_module/LoadModule ssl_module/'
+      -e 's/^#LoadModule rewrite_module/LoadModule rewrite_module/'
+      -e 's/^#LoadModule socache_shmcb_module/LoadModule socache_shmcb_module/'
+      -e 's/^#LoadModule headers_module/LoadModule headers_module/'
       /usr/local/apache2/conf/httpd.conf;
       grep -q revisional.conf /usr/local/apache2/conf/httpd.conf
       || echo 'Include conf/extra/revisional.conf' >> /usr/local/apache2/conf/httpd.conf;
