@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#1976d2"/>
-  <g transform="translate(4,4) scale(1)">
-    <path fill="#fff" d="M1 21h12v2H1zM5.245 8.07l2.83-2.827 14.14 14.142-2.828 2.828zM12.317 1l5.657 5.656-2.83 2.83-5.654-5.66zM3.825 9.485l5.657 5.657-2.828 2.828-5.657-5.657z"/>
+  <!-- Monograma "M" da logo MPG Revisional (wordmark ilegível em 16-32px) -->
+  <rect width="32" height="32" rx="7" fill="#ffffff"/>
+  <rect width="32" height="32" rx="7" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+  <g transform="translate(-14.27,-27.18) scale(0.07764)">
+    <polyline fill="#132134" points="235.29 473.23 235.55 673.4 313.93 673.4 313.93 535.79 235.29 471.96"/>
+    <polygon fill="#002d88" points="277.04 506.02 277.04 638.95 313.93 673.4 313.93 535.33 277.04 506.02"/>
+    <polygon fill="#132135" points="235.29 432.55 277.51 432.55 410.78 533.83 544.4 432.55 544.4 488.21 412.66 590.55 235.29 452.72 235.29 432.55"/>
+    <polygon fill="#132034" points="496.06 543.55 496.06 679.72 544.4 679.72 544.4 500.32 496.06 543.55"/>
   </g>
 </svg>
