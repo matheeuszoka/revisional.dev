@@ -22,9 +22,9 @@ import DownloadIcon from '@mui/icons-material/Download';
 import {
     getCaso, criarCaso, atualizarCaso, analisarCaso,
     uploadDocumento, getProgressoUpload, listarDocumentos, getDocumentoArquivo, getAuditoria, getAuditoriaJson,
-    getRelatorio, getPacoteZip, getReferenciaBcb,
+    getRelatorio, getPacoteZip, getReferenciaBcb, aplicarExtracao,
 } from '../../services/casos';
-import { toastSuccess, toastError, alertValidacao, alertProcessando } from '../../services/alerts';
+import { toastSuccess, toastError, alertValidacao, alertProcessando, alertSelecao } from '../../services/alerts';
 import { formatCpf, isValidCpf, onlyDigits } from '../../services/cpf';
 import { formatMoeda, numberToMoeda, parseMoeda } from '../../services/moeda';
 
@@ -32,6 +32,32 @@ const CAMPOS_MOEDA = [
     'valorVeiculo', 'valorEntrada', 'valorFinanciado', 'valorLiquidoLiberado', 'valorParcela',
     'iof', 'tarifaCadastro', 'tarifaAvaliacaoBem', 'tarifaRegistroContrato', 'gravame', 'seguro', 'outrosEncargos',
 ];
+
+// Rótulos amigáveis dos campos extraíveis (diálogo de conferência da extração).
+const ROTULOS_CAMPOS = {
+    clienteNome: 'Nome do cliente', clienteCpf: 'CPF do cliente',
+    instituicao: 'Instituição financeira', instituicaoCnpj: 'CNPJ da instituição',
+    contratoNumero: 'Nº do contrato', modalidade: 'Modalidade', dataContrato: 'Data do contrato',
+    veiculoDescricao: 'Descrição do veículo', valorVeiculo: 'Valor do veículo',
+    valorEntrada: 'Entrada', valorFinanciado: 'Valor financiado',
+    valorLiquidoLiberado: 'Valor líquido liberado', prazoMeses: 'Prazo (meses)',
+    valorParcela: 'Valor da parcela', taxaJurosMensalPct: 'Juros mensal (%)',
+    taxaJurosAnualPct: 'Juros anual (%)', cetMensalPct: 'CET mensal (%)', cetAnualPct: 'CET anual (%)',
+    iof: 'IOF', tarifaCadastro: 'Tarifa de cadastro', tarifaAvaliacaoBem: 'Avaliação do bem',
+    tarifaRegistroContrato: 'Registro do contrato', gravame: 'Gravame', seguro: 'Seguro',
+    outrosEncargos: 'Outros encargos', descricaoOutrosEncargos: 'Descrição outros encargos',
+};
+
+// Mínimo para o motor rodar: com financiado (ou líquido liberado) + prazo + parcela a
+// taxa é apurada por engenharia reversa (bisseção). O resto enriquece, não bloqueia.
+const faltantesEssenciais = (c) => {
+    const num = (v) => v != null && Number(v) > 0;
+    const f = [];
+    if (!num(c?.valorFinanciado) && !num(c?.valorLiquidoLiberado)) f.push('Valor financiado (ou líquido liberado)');
+    if (!num(c?.prazoMeses)) f.push('Prazo (meses)');
+    if (!num(c?.valorParcela)) f.push('Valor da parcela');
+    return f;
+};
 
 const MODALIDADES = [
     'Financiamento de veículos - Pessoa Física',
@@ -97,6 +123,10 @@ export default function CasoForm() {
 
     // --- Conferência OCR: campos extraídos com confiança (fora do form, só leitura) ---
     const [extraidos, setExtraidos] = useState({});
+    // Candidatos por campo (IA e regex podem divergir): usuário escolhe no diálogo o que aplicar.
+    const [candidatos, setCandidatos] = useState({});
+    // Liga o destaque dos campos essenciais vazios (após upload ou tentativa de análise).
+    const [mostrarPendencias, setMostrarPendencias] = useState(false);
 
     // --- Visualizador de documento anexado ---
     const [viewer, setViewer] = useState({ aberto: false, url: '', tipo: '', nome: '', carregando: false });
@@ -129,10 +159,12 @@ export default function CasoForm() {
     // Aplica um contrato vindo da API ao estado do form (máscaras de CPF/moeda).
     const aplicarContrato = (contratoApi) => {
         const c = { ...contratoVazio, ...(contratoApi || {}) };
-        // camposExtraidos/metadadosExtracao não são editáveis: separa p/ conferência, tira do form.
+        // camposExtraidos/metadadosExtracao/candidatos não são editáveis: separa p/ conferência, tira do form.
         setExtraidos((contratoApi && contratoApi.camposExtraidos) || {});
+        setCandidatos((contratoApi && contratoApi.candidatosExtracao) || {});
         delete c.camposExtraidos;
         delete c.metadadosExtracao;
+        delete c.candidatosExtracao;
         c.clienteCpf = formatCpf(c.clienteCpf);
         CAMPOS_MOEDA.forEach((k) => { c[k] = numberToMoeda(c[k]); });
         setContrato(c);
@@ -219,6 +251,77 @@ export default function CasoForm() {
         }, 800);
     });
 
+    // Diálogo de conferência: IA e regex viram candidatos por campo; o usuário marca
+    // (checkbox, um por campo) o que entra no formulário. Nada é aplicado sem confirmação.
+    // Retorna o contrato atualizado após aplicar, ou null se cancelado/nada marcado.
+    const abrirConferencia = async (cands, contratoAtual) => {
+        const camposComCandidato = Object.keys(cands).filter((k) => (cands[k] || []).length > 0);
+        if (!camposComCandidato.length) return null;
+
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const origemLabel = (o) => (o === 'ia' ? 'IA' : o === 'regex' ? 'Regex/OCR' : (o || 'OCR').toUpperCase());
+        const valorAtual = (k) => {
+            const v = contratoAtual?.[k];
+            return v == null || v === '' ? null : v;
+        };
+
+        const linhas = camposComCandidato.map((k) => {
+            const lista = cands[k];
+            const melhor = lista.reduce((a, b) => ((b?.confianca ?? 0) > (a?.confianca ?? 0) ? b : a), lista[0]);
+            const atual = valorAtual(k);
+            const avisoAtual = atual != null
+                ? `<div style="font-size:.72rem;color:#b26a00">já preenchido no formulário: ${esc(atual)} — marcar abaixo substitui</div>`
+                : '';
+            const opcoes = lista.map((c) => `
+                <label style="display:flex;align-items:center;gap:8px;margin:3px 0;cursor:pointer">
+                    <input type="checkbox" class="cand-extr" data-campo="${esc(k)}" data-origem="${esc(c.origem)}"
+                        ${!atual && c === melhor ? 'checked' : ''}>
+                    <span style="flex:1;word-break:break-word">${esc(c.valor)}</span>
+                    <span style="font-size:.75rem;color:#666;white-space:nowrap">
+                        ${origemLabel(c.origem)} · ${Math.round((c.confianca ?? 0) * 100)}%
+                    </span>
+                </label>`).join('');
+            return `<div style="padding:8px 0;border-bottom:1px solid #eee">
+                <div style="font-weight:600;font-size:.85rem">${esc(ROTULOS_CAMPOS[k] || k)}</div>
+                ${avisoAtual}${opcoes}
+            </div>`;
+        }).join('');
+
+        const result = await alertSelecao({
+            title: 'Conferência da extração',
+            html: `<div style="text-align:left;max-height:55vh;overflow:auto;font-size:.9rem">
+                <div style="font-size:.8rem;color:#666;margin-bottom:6px">
+                    Marque o valor que deve entrar no formulário (um por campo).
+                    IA e Regex/OCR podem divergir — escolha a leitura correta conferindo com o documento.
+                </div>${linhas}</div>`,
+            didOpen: (popup) => {
+                // Exclusividade por campo: marcar um candidato desmarca o irmão da outra origem.
+                popup.querySelectorAll('input.cand-extr').forEach((cb) => {
+                    cb.addEventListener('change', () => {
+                        if (!cb.checked) return;
+                        popup.querySelectorAll(`input.cand-extr[data-campo="${cb.dataset.campo}"]`)
+                            .forEach((outro) => { if (outro !== cb) outro.checked = false; });
+                    });
+                });
+            },
+            preConfirm: () => Array.from(document.querySelectorAll('input.cand-extr:checked'))
+                .map((cb) => ({ campo: cb.dataset.campo, origem: cb.dataset.origem })),
+        });
+        if (!result.isConfirmed || !(result.value || []).length) return null;
+
+        try {
+            await aplicarExtracao(id, result.value);
+            const caso = await getCaso(id);
+            aplicarContrato(caso.contrato);
+            toastSuccess(`${result.value.length} campo(s) aplicado(s) ao formulário.`);
+            return caso.contrato;
+        } catch (err) {
+            toastError(err.response?.data?.message || 'Falha ao aplicar os campos escolhidos.');
+            return null;
+        }
+    };
+
     const handleUpload = async (e) => {
         const arquivos = Array.from(e.target.files || []);
         if (fileRef.current) fileRef.current.value = '';
@@ -245,9 +348,24 @@ export default function CasoForm() {
             if (caso.resultado) setResultado(caso.resultado);
             carregarDocumentos();
             painel.close();
-            toastSuccess(arquivos.length > 1
-                ? 'Documentos processados. Confira os campos extraídos antes de analisar.'
-                : 'Documento processado. Confira os campos extraídos antes de analisar.');
+            // Conferência guiada: usuário escolhe o que aplicar; depois valida os essenciais.
+            const cands = caso.contrato?.candidatosExtracao || {};
+            let contratoPos = caso.contrato;
+            if (Object.keys(cands).length > 0) {
+                const aplicado = await abrirConferencia(cands, caso.contrato);
+                if (aplicado) contratoPos = aplicado;
+            } else {
+                alertValidacao(
+                    'A extração não identificou nenhum campo no documento (qualidade do OCR ou layout não reconhecido). '
+                    + 'Preencha o formulário manualmente a partir do contrato.',
+                    'Nada extraído'
+                );
+            }
+            const faltam = faltantesEssenciais(contratoPos);
+            if (faltam.length > 0) {
+                setMostrarPendencias(true);
+                toastError(`Faltam dados essenciais para a análise: ${faltam.join(', ')}.`);
+            }
         } catch (err) {
             const msg = err.response?.data?.message || err.response?.data?.error || err.message;
             painel.close();
@@ -301,6 +419,17 @@ export default function CasoForm() {
     const handleAnalisar = async () => {
         if (contrato.clienteCpf && !isValidCpf(contrato.clienteCpf)) {
             alertValidacao('CPF do cliente inválido. Verifique os dígitos.');
+            return;
+        }
+        // Só os 3 essenciais bloqueiam: o motor apura taxa por bisseção e o resto vira ressalva.
+        const faltam = faltantesEssenciais(montarContrato());
+        if (faltam.length > 0) {
+            setMostrarPendencias(true);
+            alertValidacao(
+                `Para executar a análise informe: ${faltam.join(', ')}. `
+                + 'Com esses três dados o sistema apura a taxa por engenharia reversa; os demais campos são complementares.',
+                'Dados mínimos da análise'
+            );
             return;
         }
         const mercadoPayload = montarMercado();
@@ -450,6 +579,12 @@ export default function CasoForm() {
     const statusColor = (st) => (st === 'OK' ? 'success' : st === 'PENDENTE' ? 'error' : 'warning');
     const sevColor = (sv) => ({ alto: 'error', medio: 'warning', info: 'info', ok: 'success' }[sv] || 'default');
 
+    // Conferência guiada: pendências recalculadas a cada digitação (o alerta some ao completar).
+    const pendencias = faltantesEssenciais(montarContrato());
+    const pendeFinanciado = mostrarPendencias && pendencias.some((p) => p.startsWith('Valor financiado'));
+    const pendePrazo = mostrarPendencias && pendencias.includes('Prazo (meses)');
+    const pendeParcela = mostrarPendencias && pendencias.includes('Valor da parcela');
+
     if (loading) return <Box sx={{ p: 6, textAlign: 'center' }}><CircularProgress /></Box>;
 
     return (
@@ -497,7 +632,7 @@ export default function CasoForm() {
                                 label="Forçar OCR (PDF escaneado)"
                             />
                             <Typography variant="caption" color="text.secondary">
-                                PDF, imagem ou TXT (vários de uma vez). A extração preenche só os campos vazios.
+                                PDF, imagem ou TXT (vários de uma vez). IA e OCR extraem os campos e você escolhe o que entra no formulário.
                             </Typography>
                         </Stack>
 
@@ -524,6 +659,34 @@ export default function CasoForm() {
                                     </ListItem>
                                 ))}
                             </List>
+                        )}
+
+                        {Object.keys(candidatos).length > 0 && (
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                color="secondary"
+                                startIcon={<FactCheckIcon />}
+                                sx={{ mt: 1.5 }}
+                                onClick={() => abrirConferencia(candidatos, montarContrato())}
+                            >
+                                Conferir campos extraídos ({Object.keys(candidatos).length})
+                            </Button>
+                        )}
+
+                        {(Object.keys(extraidos).length > 0 || mostrarPendencias) && (
+                            pendencias.length > 0 ? (
+                                <Alert severity="warning" sx={{ mt: 2 }}>
+                                    <AlertTitle>Dados mínimos para análise pendentes</AlertTitle>
+                                    A extração automática não localizou tudo — em contratos reais isso é comum.
+                                    Localize no documento e preencha manualmente: <strong>{pendencias.join(', ')}</strong>.
+                                    Com esses três dados a taxa é apurada por engenharia reversa; os demais campos são complementares.
+                                </Alert>
+                            ) : (
+                                <Alert severity="success" sx={{ mt: 2 }}>
+                                    Dados mínimos presentes (valor financiado, prazo e parcela). Confira os valores extraídos e execute a análise.
+                                </Alert>
+                            )
                         )}
                     </>
                 )}
@@ -553,10 +716,10 @@ export default function CasoForm() {
                     <Grid size={{ xs: 12, sm: 6 }}><TextField label="Descrição do veículo" fullWidth value={contrato.veiculoDescricao} onChange={set('veiculoDescricao')} /></Grid>
                     <Grid size={{ xs: 6, sm: 3 }}><TextField label="Valor do veículo" fullWidth value={contrato.valorVeiculo} onChange={setMoeda('valorVeiculo')} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
                     <Grid size={{ xs: 6, sm: 3 }}><TextField label="Entrada" fullWidth value={contrato.valorEntrada} onChange={setMoeda('valorEntrada')} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
-                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor financiado" fullWidth value={contrato.valorFinanciado} onChange={setMoeda('valorFinanciado')} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
-                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor líquido liberado" fullWidth value={contrato.valorLiquidoLiberado} onChange={setMoeda('valorLiquidoLiberado')} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
-                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Prazo (meses)" type="number" fullWidth value={contrato.prazoMeses} onChange={set('prazoMeses')} /></Grid>
-                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor da parcela" fullWidth value={contrato.valorParcela} onChange={setMoeda('valorParcela')} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
+                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor financiado" fullWidth value={contrato.valorFinanciado} onChange={setMoeda('valorFinanciado')} error={pendeFinanciado} helperText={pendeFinanciado ? 'Essencial para a análise' : ''} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
+                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor líquido liberado" fullWidth value={contrato.valorLiquidoLiberado} onChange={setMoeda('valorLiquidoLiberado')} error={pendeFinanciado} helperText={pendeFinanciado ? 'Alternativa ao valor financiado' : ''} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
+                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Prazo (meses)" type="number" fullWidth value={contrato.prazoMeses} onChange={set('prazoMeses')} error={pendePrazo} helperText={pendePrazo ? 'Essencial para a análise' : ''} /></Grid>
+                    <Grid size={{ xs: 6, sm: 4 }}><TextField label="Valor da parcela" fullWidth value={contrato.valorParcela} onChange={setMoeda('valorParcela')} error={pendeParcela} helperText={pendeParcela ? 'Essencial para a análise' : ''} inputProps={{ inputMode: 'numeric' }} InputProps={{ startAdornment: <InputAdornment position="start">R$</InputAdornment> }} /></Grid>
                 </Grid>
 
                 <SectionTitle>Taxas e CET (se constarem no contrato)</SectionTitle>

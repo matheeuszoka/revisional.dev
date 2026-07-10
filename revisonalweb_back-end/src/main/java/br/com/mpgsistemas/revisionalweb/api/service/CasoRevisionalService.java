@@ -119,8 +119,32 @@ public class CasoRevisionalService {
     public CasoRevisional atualizar(Long id, CasoRequestDTO dto, Usuario auditor) {
         CasoRevisional caso = buscar(id, auditor);
         if (dto.titulo() != null) caso.setTitulo(dto.titulo());
-        if (dto.contrato() != null) caso.setContrato(dto.contrato());
+        if (dto.contrato() != null) caso.setContrato(preservarExtracao(caso.getContrato(), dto.contrato()));
         return repository.save(caso);
+    }
+
+    /**
+     * O form do front não envia as composições de extração nem os hashes do documento —
+     * substituir o JSONB inteiro apagaria camposExtraidos, candidatosExtracao e a trilha
+     * do arquivo a cada save. Preserva o que o novo contrato veio sem.
+     */
+    private static DadosContrato preservarExtracao(DadosContrato atual, DadosContrato novo) {
+        if (atual == null || novo == null) return novo;
+        if (novo.getCamposExtraidos() == null || novo.getCamposExtraidos().isEmpty())
+            novo.setCamposExtraidos(atual.getCamposExtraidos());
+        if (novo.getCandidatosExtracao() == null || novo.getCandidatosExtracao().isEmpty())
+            novo.setCandidatosExtracao(atual.getCandidatosExtracao());
+        if (novo.getMetadadosExtracao() == null || novo.getMetadadosExtracao().isEmpty())
+            novo.setMetadadosExtracao(atual.getMetadadosExtracao());
+        if (isBlank(novo.getContratoArquivo())) novo.setContratoArquivo(atual.getContratoArquivo());
+        if (isBlank(novo.getHashContrato())) novo.setHashContrato(atual.getHashContrato());
+        if (isBlank(novo.getHashTextoExtraido())) novo.setHashTextoExtraido(atual.getHashTextoExtraido());
+        if (isBlank(novo.getAmostraTextoExtraido())) novo.setAmostraTextoExtraido(atual.getAmostraTextoExtraido());
+        return novo;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     /**
@@ -130,7 +154,9 @@ public class CasoRevisionalService {
     public CasoRevisional analisar(Long id, AnaliseRequestDTO dto, Usuario auditor) {
         CasoRevisional caso = buscar(id, auditor);
 
-        DadosContrato contrato = (dto != null && dto.contrato() != null) ? dto.contrato() : caso.getContrato();
+        DadosContrato contrato = (dto != null && dto.contrato() != null)
+                ? preservarExtracao(caso.getContrato(), dto.contrato())
+                : caso.getContrato();
         if (contrato == null) contrato = new DadosContrato();
         caso.setContrato(contrato);
 
@@ -323,21 +349,30 @@ public class CasoRevisionalService {
                 contrato.getMetadadosExtracao().put("paginas", String.valueOf(extracao.paginas()));
                 contrato.getMetadadosExtracao().put("avisos", extracao.avisos());
 
-                // IA primeiro (melhor qualidade); regex preenche o que faltar. Ambos só vazios.
-                progressoExtracao.publicar(id, "IA", "IA analisando e mapeando os campos do contrato…", 65);
-                Map<String, CampoExtraido> camposIa = extracaoIa.extrairCampos(texto);
-                List<String> aplicadosIa = MapeadorContrato.aplicar(contrato, camposIa, true);
-                progressoExtracao.publicar(id, "REGEX", "Complementando campos com o parser estrutural…", 85);
+                // IA e regex extraem em paralelo conceitual; nada é aplicado ao contrato aqui.
+                // Os candidatos das duas origens ficam em candidatosExtracao e o operador
+                // escolhe no front o que entra no formulário (POST /extracao/aplicar).
+                // Texto integral vai à IA em janelas (contrato real excede 1 chamada); faixa 60–85%.
+                progressoExtracao.publicar(id, "IA", "IA analisando e mapeando os campos do contrato…", 62);
+                Map<String, CampoExtraido> camposIa = extracaoIa.extrairCampos(texto,
+                        (atual, total) -> progressoExtracao.publicar(id, "IA",
+                                total > 1
+                                        ? "IA analisando parte " + atual + " de " + total + " do contrato…"
+                                        : "IA analisando e mapeando os campos do contrato…",
+                                62 + (int) Math.round(atual * 23.0 / Math.max(total, 1))));
+                progressoExtracao.publicar(id, "REGEX", "Extraindo campos com o parser estrutural…", 85);
                 Map<String, CampoExtraido> camposRegex = parserRegex.extrair(texto);
-                List<String> aplicadosRegex = MapeadorContrato.aplicar(contrato, camposRegex, true);
+
+                // Upload em lote acumula candidatos (última extração de cada origem vence);
+                // valores idênticos entre origens colapsam no de maior confiança.
+                contrato.setCandidatosExtracao(
+                        montarCandidatos(contrato.getCandidatosExtracao(), camposIa, camposRegex));
 
                 contrato.getMetadadosExtracao().put("ia", extracaoIa.habilitado() ? "openrouter" : "desativada");
                 contrato.getMetadadosExtracao().put("regex", "ativo");
                 caso.setContrato(contrato);
 
                 meta.put("metodo", extracao.metodo());
-                meta.put("camposAplicadosIa", aplicadosIa);
-                meta.put("camposAplicadosRegex", aplicadosRegex);
                 meta.put("totalExtraidoIa", camposIa.size());
                 meta.put("totalExtraidoRegex", camposRegex.size());
                 registrarEvento(caso, auditor, "DOCUMENT_UPLOAD_EXTRACT", meta);
@@ -351,12 +386,84 @@ public class CasoRevisionalService {
             progressoExtracao.publicar(id, "SALVANDO", "Consolidando dados extraídos…", 95);
             repository.save(caso);
             progressoExtracao.concluir(id);
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Throwable, não Exception: o Tesseract/JNA lança java.lang.Error — se escapar,
+            // o progresso nunca recebe falhar() e o front fica pendurado no polling.
             // LGPD: sem dados do contrato na mensagem de erro.
             progressoExtracao.falhar(id, "Falha inesperada no processamento do documento.");
         } finally {
             TenantContext.clear();
         }
+    }
+
+    /**
+     * Junta os candidatos de IA e regex por campo sobre os já existentes (upload em
+     * lote acumula). No máximo um candidato por origem em cada campo — a extração mais
+     * recente da origem substitui a anterior. Quando IA e regex concordam no valor,
+     * colapsa no de maior confiança; quando divergem, ambos ficam e o operador decide.
+     */
+    static Map<String, List<CampoExtraido>> montarCandidatos(Map<String, List<CampoExtraido>> base,
+                                                             Map<String, CampoExtraido> ia,
+                                                             Map<String, CampoExtraido> regex) {
+        Map<String, Map<String, CampoExtraido>> porOrigem = new LinkedHashMap<>();
+        if (base != null) {
+            base.forEach((nome, lista) -> lista.forEach(c -> porOrigem
+                    .computeIfAbsent(nome, k -> new LinkedHashMap<>())
+                    .put(c.getOrigem() != null ? c.getOrigem() : "ocr", c)));
+        }
+        ia.forEach((nome, c) -> porOrigem.computeIfAbsent(nome, k -> new LinkedHashMap<>()).put("ia", c));
+        regex.forEach((nome, c) -> porOrigem.computeIfAbsent(nome, k -> new LinkedHashMap<>()).put("regex", c));
+
+        Map<String, List<CampoExtraido>> out = new LinkedHashMap<>();
+        porOrigem.forEach((nome, origens) -> {
+            List<CampoExtraido> lista = new java.util.ArrayList<>(origens.values());
+            if (lista.size() == 2 && lista.get(0).getValor() != null
+                    && lista.get(0).getValor().equalsIgnoreCase(lista.get(1).getValor())) {
+                double c0 = lista.get(0).getConfianca() != null ? lista.get(0).getConfianca() : 0.0;
+                double c1 = lista.get(1).getConfianca() != null ? lista.get(1).getConfianca() : 0.0;
+                lista = new java.util.ArrayList<>(List.of(c1 > c0 ? lista.get(1) : lista.get(0)));
+            }
+            out.put(nome, lista);
+        });
+        return out;
+    }
+
+    /** Escolha do operador na conferência: qual candidato (campo+origem) entra no formulário. */
+    public record EscolhaExtracao(String campo, String origem) {
+    }
+
+    /**
+     * Aplica os candidatos escolhidos pelo operador sobre o contrato (sobrescreve o
+     * valor atual do campo — a escolha é explícita). Registra EXTRACTION_APPLY com a
+     * lista aplicada; os candidatos permanecem salvos para reconferência posterior.
+     */
+    public CasoRevisional aplicarExtracao(Long id, List<EscolhaExtracao> escolhas, Usuario auditor) {
+        CasoRevisional caso = buscar(id, auditor);
+        DadosContrato contrato = caso.getContrato() != null ? caso.getContrato() : new DadosContrato();
+        Map<String, List<CampoExtraido>> candidatos = contrato.getCandidatosExtracao();
+        if (candidatos == null || candidatos.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Não há extração pendente de conferência neste caso. Anexe um documento primeiro.");
+        }
+
+        Map<String, CampoExtraido> escolhidos = new LinkedHashMap<>();
+        for (EscolhaExtracao e : escolhas != null ? escolhas : List.<EscolhaExtracao>of()) {
+            List<CampoExtraido> lista = candidatos.get(e.campo());
+            if (lista == null) continue;
+            lista.stream()
+                    .filter(c -> c.getOrigem() != null && c.getOrigem().equalsIgnoreCase(e.origem()))
+                    .findFirst()
+                    .ifPresent(c -> escolhidos.put(e.campo(), c));
+        }
+        List<String> aplicados = MapeadorContrato.aplicar(contrato, escolhidos, false);
+        caso.setContrato(contrato);
+        CasoRevisional salvo = repository.save(caso);
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("camposAplicados", aplicados);
+        meta.put("totalCandidatos", candidatos.size());
+        registrarEvento(salvo, auditor, "EXTRACTION_APPLY", meta);
+        return salvo;
     }
 
     /** Progresso corrente do upload/extração do caso (consultado por polling pelo front). */

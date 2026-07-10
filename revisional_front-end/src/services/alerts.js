@@ -80,4 +80,22 @@ export const alertProcessando = ({ title = 'Processando…', text = '' } = {}) =
 export const confirmExclusao = ({ text = 'Esta ação não pode ser desfeita.', title = 'Confirmar exclusão' } = {}) =>
     confirmAcao({ title, text, icon: 'warning', confirmButtonText: 'Excluir', danger: true });
 
+// Diálogo de seleção com HTML custom (checkboxes de conferência da extração).
+// preConfirm coleta a escolha; retorna o result do Swal (value = retorno do preConfirm).
+export const alertSelecao = ({ title, html, didOpen, preConfirm, confirmButtonText = 'Aplicar seleção' }) =>
+    Swal.fire({
+        title,
+        html,
+        width: 720,
+        showCancelButton: true,
+        showCloseButton: true,
+        confirmButtonText,
+        cancelButtonText: 'Agora não',
+        confirmButtonColor: BRAND,
+        cancelButtonColor: '#6b7280',
+        focusConfirm: false,
+        didOpen,
+        preConfirm,
+    });
+
 export default Swal;

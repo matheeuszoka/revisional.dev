@@ -72,8 +72,8 @@ public class CasoRevisionalController {
 
     /**
      * Anexa um documento (PDF/imagem/TXT) ao caso, extrai texto (OCR) e estrutura
-     * os campos via IA, preenchendo apenas os campos ainda vazios do contrato.
-     * Devolve o caso atualizado para o front conferir os dados extraídos.
+     * os campos via IA + regex. Nada é aplicado automaticamente: os candidatos ficam
+     * em candidatosExtracao e o operador confirma via POST /{id}/extracao/aplicar.
      */
     @PostMapping(value = "/{id}/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<CasoDetalheDTO> upload(@PathVariable Long id,
@@ -85,6 +85,17 @@ public class CasoRevisionalController {
         CasoRevisionalService.DocumentoAnexado anexo = service.anexarDocumento(id, documento, auditor);
         service.extrairCamposAsync(id, anexo.bytes(), anexo.nomeOriginal(), forcarOcr, auditor, TenantContext.get());
         return ResponseEntity.accepted().body(CasoDetalheDTO.from(anexo.caso()));
+    }
+
+    /**
+     * Aplica os candidatos de extração escolhidos pelo operador na conferência
+     * (checkbox por campo no front). Corpo: [{"campo": "clienteNome", "origem": "ia"}, ...].
+     */
+    @PostMapping("/{id}/extracao/aplicar")
+    public CasoDetalheDTO aplicarExtracao(@PathVariable Long id,
+                                          @RequestBody List<CasoRevisionalService.EscolhaExtracao> escolhas,
+                                          @AuthenticationPrincipal Usuario auditor) {
+        return CasoDetalheDTO.from(service.aplicarExtracao(id, escolhas, auditor));
     }
 
     /**

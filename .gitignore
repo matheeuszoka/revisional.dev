@@ -19,9 +19,15 @@ build/
 # Docker (volumes de dados locais)
 docker/data/
 
+# Tesseract (modelos de idioma baixados p/ dev local)
+revisonalweb_back-end/tessdata/
+
 # OS
 Thumbs.db
 .DS_Store
 
 # Logs
 *.log
+
+# Dumps locais de análise (contêm dados reais de contrato — LGPD)
+extracao_caso*.json
