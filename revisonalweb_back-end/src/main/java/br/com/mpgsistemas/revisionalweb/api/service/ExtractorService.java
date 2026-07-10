@@ -30,9 +30,12 @@ public class ExtractorService {
     private static final int LIMIAR_TEXTO_OCR = 200;
 
     private final ConfiguracaoService config;
+    private final br.com.mpgsistemas.revisionalweb.api.model.ParametrosSistema params;
 
-    public ExtractorService(ConfiguracaoService config) {
+    public ExtractorService(ConfiguracaoService config,
+                            br.com.mpgsistemas.revisionalweb.api.model.ParametrosSistema params) {
         this.config = config;
+        this.params = params;
     }
 
     /** Notificado a cada página processada pelo OCR (página atual, total). */
@@ -84,13 +87,15 @@ public class ExtractorService {
             }
 
             if (forcarOcr || normalizar(texto).length() < LIMIAR_TEXTO_OCR) {
+                // Throwable, não Exception: Tesseract sem tessdata explode com java.lang.Error
+                // ("Invalid memory access" via JNA) — precisa degradar para o texto nativo.
                 try {
                     String ocr = ocrPdf(doc, cfg, progresso);
                     if (normalizar(ocr).length() > normalizar(texto).length()) {
                         return new ResultadoExtracao(ocr, "ocr_pdf_tesseract", paginas, avisos.toString());
                     }
                     avisos.append("OCR não superou a extração textual. ");
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     avisos.append(texto.isBlank()
                             ? "OCR indisponível: " + e.getMessage() + ". "
                             : "OCR ignorado: " + e.getMessage() + ". ");
@@ -126,7 +131,8 @@ public class ExtractorService {
             return novoTesseract(cfg).doOCR(img);
         } catch (ResponseStatusException e) {
             throw e;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Throwable: JNA lança java.lang.Error quando o tessdata não carrega.
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "Falha no OCR da imagem: " + e.getMessage(), e);
         }
@@ -141,6 +147,9 @@ public class ExtractorService {
         // BufferedImage não carrega DPI até o Tesseract (JNA); sem isso ele assume 70 dpi
         // ("Invalid resolution 1 dpi") e degrada a segmentação. Informa o DPI do render.
         t.setVariable("user_defined_dpi", String.valueOf(cfg.getOcrDpi() != null ? cfg.getOcrDpi() : 300));
+        // PSM explícito: sem setPageSegMode o engine cola células de tabela do quadro-resumo
+        // ("Valordoveiculoavista r$9000000"). PSM 3 validado com CDC real (11/11 campos).
+        t.setPageSegMode(params.getOcrPsm());
         return t;
     }
 

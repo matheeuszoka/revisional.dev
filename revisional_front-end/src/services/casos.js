@@ -43,6 +43,10 @@ export const uploadDocumento = async (id, arquivo, forcarOcr = false) => {
     })).data;
 };
 
+// Aplica os candidatos de extração escolhidos na conferência. escolhas: [{campo, origem}].
+export const aplicarExtracao = async (id, escolhas) =>
+    (await api.post(`/casos/${id}/extracao/aplicar`, escolhas)).data;
+
 export const listarDocumentos = async (id) => (await api.get(`/casos/${id}/documentos`)).data;
 
 // Conteúdo do documento (Blob) para visualização inline. Auth vai pelo header do axios.

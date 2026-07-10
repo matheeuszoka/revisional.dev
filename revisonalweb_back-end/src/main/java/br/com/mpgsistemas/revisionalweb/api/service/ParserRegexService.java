@@ -22,29 +22,89 @@ public class ParserRegexService {
     private static final int FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS;
 
     private static final String NUM_BR = "[0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})|[0-9]+(?:\\.[0-9]{2})";
+    // OCR de contrato escaneado costuma perder a pontuação ("R$ 90.000,00" -> "r$9000000"):
+    // dígitos corridos após R$ são tratados como centavos implícitos (normalizarCentavos).
+    private static final String NUM_SEM_PONTUACAO = "[0-9]{3,10}";
+    // Separador tolerante entre rótulo percentual e o número ("CET Wam.:263%" tem ".:").
+    private static final String SEP_PCT = "[\\s.:\\-=]{0,4}";
 
     private static final Map<String, List<String>> CAMPOS_MONETARIOS = new LinkedHashMap<>();
+
+    // Percentuais das tabelas de CDC (juros F.4, CET H). OCR degrada "%" para W/H e cola
+    // as células: "mensal: % a.m.: 1,48%" -> "mensal:%a.m.:1,48%" / "CET % a.m.: 2,63%" ->
+    // "CET Wam.:263%". Padrões toleram [%whº] no lugar do % e espaços opcionais.
+    // Juros exige a palavra mensal/anual/juros no contexto para não roubar o valor do CET.
+    // "a.m."/"a.a." toleram vírgula no lugar do ponto ("CET a,m:") e % lido como W/H.
+    private static final String AM = "a\\s*[.,]?\\s*m\\b";
+    private static final String AA = "a\\s*[.,]?\\s*a\\b";
     private static final List<String[]> CAMPOS_PERCENTUAIS = List.of(
-            // Layout tabular de CDC (ex. Santander/Aymoré): "mensal: % a.m.: 1,48%" / "CET % a.m.: 2,63%"
-            new String[]{"taxaJurosMensalPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remunerat[oó]rios)?\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "mensal\\s*:?\\s*%\\s*a\\.m\\.", "juros\\s*(?:a\\.m\\.|ao\\s+mes|mensal)"},
-            new String[]{"taxaJurosAnualPct", "taxa\\s+(?:de\\s+)?juros(?:\\s+remunerat[oó]rios)?\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "anual\\s*:?\\s*%\\s*a\\.a\\.", "juros\\s*(?:a\\.a\\.|ao\\s+ano|anual)"},
-            new String[]{"cetMensalPct", "cet\\s*(?:mensal|a\\.m\\.|ao\\s+mes)", "cet\\s*%\\s*a\\.m\\.", "custo\\s+efetivo\\s+total\\s*(?:mensal|a\\.m\\.)"},
-            new String[]{"cetAnualPct", "cet\\s*(?:anual|a\\.a\\.|ao\\s+ano)", "cet\\s*%\\s*a\\.a\\.", "custo\\s+efetivo\\s+total\\s*(?:anual|a\\.a\\.)"}
+            // CET: rótulo H do CDC "CET - CUSTO EFETIVO TOTAL DA OPERAÇÃO ... CET % a.m.: 2,63% CET % a.a.: 37,13%"
+            new String[]{"cetMensalPct", "cet\\s*[%whº]{0,2}\\s*" + AM, "cet\\s*(?:mensal|ao\\s*mes)",
+                    "custo\\s*efetivo\\s*total(?:\\s*da\\s*opera[cç][aã]o)?[^0-9%]{0,40}?(?:mensal|" + AM + ")"},
+            new String[]{"cetAnualPct", "cet\\s*[%whº]{0,2}\\s*" + AA, "cet\\s*(?:anual|ao\\s*ano)",
+                    "custo\\s*efetivo\\s*total(?:\\s*da\\s*opera[cç][aã]o)?[^0-9%]{0,40}?(?:anual|" + AA + ")"},
+            // Juros remuneratórios: linha F.4 "Taxa de juros remuneratórios diária, mensal e anual:
+            // diária: % a.d.: 0,05% mensal: % a.m.: 1,48% anual: % a.a.: 19,32%" (não há campo p/ diária;
+            // o âmbito mensal/anual exige a palavra no contexto p/ não roubar o valor do CET).
+            new String[]{"taxaJurosMensalPct", "taxa\\s*(?:de\\s*)?juros(?:\\s*remunerat[oó]ri[oa]s)?[^0-9%]{0,60}?mensal",
+                    "mensal\\s*:?\\s*[%whº]?\\s*" + AM, "juros\\s*(?:" + AM + "|ao\\s*mes|mensal)"},
+            new String[]{"taxaJurosAnualPct", "taxa\\s*(?:de\\s*)?juros(?:\\s*remunerat[oó]ri[oa]s)?[^0-9%]{0,80}?anual",
+                    "anual\\s*:?\\s*[%whº]?\\s*" + AA, "juros\\s*(?:" + AA + "|ao\\s*ano|anual)"}
     );
 
     static {
-        CAMPOS_MONETARIOS.put("valorVeiculo", List.of("valor do veiculo a vista", "valor do veículo à vista", "valor do veiculo", "valor do veículo", "preco do veiculo", "preço do veículo", "valor do bem"));
+        // Rótulos SEM acento e minúsculos: labelRegex() gera regex tolerante a OCR
+        // (acentos opcionais, \s* entre palavras casa texto colado "Valordoveiculoavista").
+        CAMPOS_MONETARIOS.put("valorVeiculo", List.of("valor do veiculo a vista", "valor do bem a vista", "valor a vista", "valor do veiculo", "preco do veiculo", "valor do bem"));
         CAMPOS_MONETARIOS.put("valorEntrada", List.of("valor da entrada", "valor de entrada", "pagamento inicial", "entrada", "sinal"));
-        CAMPOS_MONETARIOS.put("valorFinanciado", List.of("valor total financiado", "valor financiado", "total financiado", "valor do financiamento", "credito concedido", "crédito concedido"));
-        CAMPOS_MONETARIOS.put("valorLiquidoLiberado", List.of("valor liquido liberado", "valor líquido liberado", "valor liberado", "credito liquido", "crédito líquido"));
-        CAMPOS_MONETARIOS.put("valorParcela", List.of("valor de cada parcela mensal", "valor da parcela", "prestacao", "prestação", "parcela mensal", "valor de cada parcela"));
-        CAMPOS_MONETARIOS.put("iof", List.of("iof", "total de impostos a serem financiados", "imposto sobre operacoes financeiras", "imposto sobre operações financeiras"));
+        CAMPOS_MONETARIOS.put("valorFinanciado", List.of("valor total financiado", "valor financiado", "total financiado", "valor do financiamento", "credito concedido"));
+        CAMPOS_MONETARIOS.put("valorLiquidoLiberado", List.of("valor liquido liberado", "valor liberado", "credito liquido"));
+        CAMPOS_MONETARIOS.put("valorParcela", List.of("valor de cada parcela mensal", "valor da parcela", "prestacao", "parcela mensal", "valor de cada parcela"));
+        CAMPOS_MONETARIOS.put("iof", List.of("total de impostos a serem financiados", "iof", "imposto sobre operacoes financeiras"));
         CAMPOS_MONETARIOS.put("tarifaCadastro", List.of("tarifa de cadastro", "tarifa cadastro", "cadastro"));
-        CAMPOS_MONETARIOS.put("tarifaAvaliacaoBem", List.of("tarifa de avaliacao de bem", "tarifa de avaliação de bem", "avaliacao do bem", "avaliação do bem", "tarifa de avaliacao", "tarifa de avaliação"));
+        CAMPOS_MONETARIOS.put("tarifaAvaliacaoBem", List.of("tarifa de avaliacao de bem", "avaliacao do bem", "tarifa de avaliacao"));
         CAMPOS_MONETARIOS.put("tarifaRegistroContrato", List.of("registro de contrato", "registro contrato", "tarifa de registro", "despesa de registro"));
-        CAMPOS_MONETARIOS.put("gravame", List.of("registro de gravame", "gravame", "orgao de transito", "órgão de trânsito"));
-        CAMPOS_MONETARIOS.put("seguro", List.of("seguro prestamista", "seguro protecao financeira", "seguro proteção financeira", "seguro"));
-        CAMPOS_MONETARIOS.put("outrosEncargos", List.of("outros encargos", "outras despesas", "servicos de terceiros", "serviços de terceiros"));
+        CAMPOS_MONETARIOS.put("gravame", List.of("registro de gravame", "gravame", "registro contrato-orgao de transito", "orgao de transito"));
+        CAMPOS_MONETARIOS.put("seguro", List.of("seguro prestamista", "seguro protecao financeira", "seguro"));
+        CAMPOS_MONETARIOS.put("outrosEncargos", List.of("outros encargos", "outras despesas", "servicos de terceiros"));
+    }
+
+    /**
+     * Converte rótulo (sem acento, minúsculo) em regex tolerante a OCR: espaço vira
+     * \s* (OCR cola palavras: "Valordaentrada"), vogais/c casam com e sem acento.
+     */
+    static String labelRegex(String label) {
+        StringBuilder sb = new StringBuilder();
+        for (char ch : label.toCharArray()) {
+            switch (ch) {
+                case ' ' -> sb.append("\\s*");
+                case 'a' -> sb.append("[aàáâã]");
+                case 'e' -> sb.append("[eéê]");
+                case 'i' -> sb.append("[ií]");
+                case 'o' -> sb.append("[oóôõ]");
+                case 'u' -> sb.append("[uú]");
+                case 'c' -> sb.append("[cç]");
+                case '-' -> sb.append("[\\-\\s]?");
+                default -> sb.append(Pattern.quote(String.valueOf(ch)));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** "9000000" (R$ sem pontuação no OCR) -> "90000,00": últimos 2 dígitos são centavos. */
+    static String normalizarCentavos(String digitos) {
+        if (digitos.length() <= 2) return digitos;
+        return digitos.substring(0, digitos.length() - 2) + "," + digitos.substring(digitos.length() - 2);
+    }
+
+    /**
+     * Percentual sem separador decimal vindo do OCR ("263" de "2,63%", "1932" de "19,32%"):
+     * 3-4 dígitos viram vírgula antes dos 2 últimos. 1-2 dígitos ficam como estão.
+     */
+    static String normalizarPct(String bruto) {
+        if (bruto.contains(",") || bruto.contains(".")) return bruto;
+        if (bruto.length() >= 3 && bruto.length() <= 4) return normalizarCentavos(bruto);
+        return bruto;
     }
 
     public Map<String, CampoExtraido> extrair(String texto) {
@@ -59,8 +119,10 @@ public class ParserRegexService {
         achar(norm, "\\b(\\d{2}\\.?\\d{3}\\.?\\d{3}/?\\d{4}-?\\d{2})\\b", m ->
                 add(out, "instituicaoCnpj", m.group(1), 0.75, m.group(0)));
 
-        // Nome do cliente
+        // Nome do cliente. Rótulo do quadro-resumo CDC ("Nome/Razão Social do Cliente:")
+        // primeiro — é o mais confiável; genéricos depois.
         for (String pat : List.of(
+                "nome\\s*/?\\s*raz[aã]o\\s*social(?:\\s*do\\s*cliente)?\\s*[:\\-]?\\s*([\\p{Lu}][\\p{L}\\s]{5,90})",
                 "(?:cliente|financiado|devedor|emitente|comprador|mutuario|mutuário)\\s*[:\\-]?\\s*([\\p{Lu}][\\p{L}\\s]{5,90})",
                 "nome\\s*[:\\-]?\\s*([\\p{Lu}][\\p{L}\\s]{5,90})")) {
             Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
@@ -129,32 +191,41 @@ public class ParserRegexService {
             }
         }
 
-        // Valores monetários por rótulo. Duas tentativas por rótulo:
-        // 1) estrita: valor logo após o rótulo;
+        // Valores monetários por rótulo (labelRegex: tolera OCR colado/sem acento). Três tentativas:
+        // 1) estrita: valor BR logo após o rótulo;
         // 2) tolerante: layouts tabulares (CDC Santander etc.) intercalam parênteses de fórmula
         //    "(E.1 + E.4)" e checkboxes "Isenta: sim não Financiada: sim não" entre rótulo e valor —
-        //    pula parênteses e até 60 chars sem dígito, mas exige "R$" para ancorar no valor certo.
+        //    pula parênteses e até 60 chars sem dígito, mas exige "R$" para ancorar no valor certo;
+        // 3) sem pontuação: OCR perde separadores ("r$9000000") — dígitos corridos após R$
+        //    viram centavos implícitos, com confiança menor (operador confere no diálogo).
         CAMPOS_MONETARIOS.forEach((campo, labels) -> {
             for (String label : labels) {
-                String estrito = "(" + Pattern.quote(label) + ")\\s*[:\\-=]?\\s*(?:R\\$\\s*)?(" + NUM_BR + ")";
+                String lr = labelRegex(label);
+                String estrito = "(" + lr + ")\\s*[:\\-=]?\\s*(?:R\\$\\s*)?(" + NUM_BR + ")";
                 Matcher m = Pattern.compile(estrito, FLAGS).matcher(raw);
                 if (m.find()) {
                     add(out, campo, m.group(2), 0.86, m.group(0));
                     return;
                 }
-                String tolerante = "(" + Pattern.quote(label) + ")(?:\\s*\\([^)]{0,80}\\))*[^0-9]{0,60}?R\\$\\s*(" + NUM_BR + ")";
+                String tolerante = "(" + lr + ")(?:\\s*\\([^)]{0,80}\\))*[^0-9]{0,60}?R\\$\\s*(" + NUM_BR + ")";
                 m = Pattern.compile(tolerante, FLAGS).matcher(raw);
                 if (m.find()) {
                     add(out, campo, m.group(2), 0.80, m.group(0));
                     return;
                 }
+                String semPontuacao = "(" + lr + ")(?:\\s*\\([^)]{0,80}\\))*[^0-9]{0,60}?R\\$\\s*(" + NUM_SEM_PONTUACAO + ")\\b";
+                m = Pattern.compile(semPontuacao, FLAGS).matcher(raw);
+                if (m.find()) {
+                    add(out, campo, normalizarCentavos(m.group(2)), 0.62, m.group(0));
+                    return;
+                }
             }
         });
 
-        // Prazo (meses)
+        // Prazo (meses). \s* entre palavras: OCR cola "NúmerodeParcelasmensais:36".
         for (String pat : List.of(
-                "(?:prazo|(?:quantidade|numero|n[uú]mero)\\s+de\\s+parcelas(?:\\s+mensais)?)\\s*[:\\-]?\\s*(\\d{1,3})\\s*(?:meses|parcelas)?",
-                "(\\d{1,3})\\s*(?:parcelas\\s+mensais|presta[cç][oõ]es\\s+mensais)")) {
+                "(?:prazo|(?:quantidade|numero|n[uú]mero)\\s*de\\s*parcelas(?:\\s*mensais)?)\\s*[:\\-]?\\s*(\\d{1,3})\\s*(?:meses|parcelas)?",
+                "(\\d{1,3})\\s*(?:parcelas\\s*mensais|presta[cç][oõ]es\\s*mensais)")) {
             Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
             if (m.find()) {
                 int n = Integer.parseInt(m.group(1));
@@ -165,14 +236,17 @@ public class ParserRegexService {
             }
         }
 
-        // Taxas / CET por rótulo
+        // Taxas / CET por rótulo. Número aceita forma sem vírgula ("263%" = 2,63% no OCR);
+        // normalizarPct decide. Separador tolera ".:" que o OCR insere ("CET Wam.:263%").
         for (String[] spec : CAMPOS_PERCENTUAIS) {
             String campo = spec[0];
             for (int i = 1; i < spec.length; i++) {
-                String pat = "(" + spec[i] + ")\\s*[:\\-=]?\\s*([0-9]{1,3}(?:[.,][0-9]{1,4})?)\\s*%?";
+                String pat = "(" + spec[i] + ")" + SEP_PCT + "([0-9]{1,3}(?:[.,][0-9]{1,4})?|[0-9]{3,4})\\s*%?";
                 Matcher m = Pattern.compile(pat, FLAGS).matcher(raw);
                 if (m.find()) {
-                    add(out, campo, m.group(2), 0.84, m.group(0));
+                    String bruto = m.group(2);
+                    String valor = normalizarPct(bruto);
+                    add(out, campo, valor, valor.equals(bruto) ? 0.84 : 0.62, m.group(0));
                     break;
                 }
             }

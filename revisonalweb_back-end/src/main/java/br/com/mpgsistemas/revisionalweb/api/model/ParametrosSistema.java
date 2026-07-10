@@ -44,6 +44,11 @@ public class ParametrosSistema {
     private int ocrDpi;
     @Value("${ocr.max-paginas:25}")
     private int ocrMaxPaginas;
+    // Page Segmentation Mode do Tesseract. Sem setar explicitamente, o Tess4J deixa o
+    // engine num default que cola as células de tabela ("Valordoveiculoavista r$9000000");
+    // PSM 3 (auto) lê o quadro-resumo de CDC quase perfeito. Validado com contrato real.
+    @Value("${ocr.psm:3}")
+    private int ocrPsm;
 
     // --- Extração por IA (OpenRouter; opcional). apiKey vazia => IA desativada. ---
     @Value("${openrouter.base-url:https://openrouter.ai/api/v1}")
@@ -60,4 +65,10 @@ public class ParametrosSistema {
     private String openRouterTitulo;
     @Value("${openrouter.max-chars:14000}")
     private int openRouterMaxChars;
+    // Contrato real tem 20-60k chars: o texto é fatiado em janelas de max-chars e a IA
+    // roda por janela (merge por confiança). max-chunks limita custo/tempo por documento.
+    @Value("${openrouter.max-chunks:6}")
+    private int openRouterMaxChunks;
+    @Value("${openrouter.sobreposicao-chars:800}")
+    private int openRouterSobreposicaoChars;
 }

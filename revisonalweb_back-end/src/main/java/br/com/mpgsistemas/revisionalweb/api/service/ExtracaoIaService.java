@@ -2,6 +2,7 @@ package br.com.mpgsistemas.revisionalweb.api.service;
 
 import br.com.mpgsistemas.revisionalweb.api.model.CampoExtraido;
 import br.com.mpgsistemas.revisionalweb.api.model.ConfiguracaoSistema;
+import br.com.mpgsistemas.revisionalweb.api.model.ParametrosSistema;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -12,7 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -50,27 +53,85 @@ public class ExtracaoIaService {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final ConfiguracaoService config;
+    private final ParametrosSistema params;
 
-    public ExtracaoIaService(ConfiguracaoService config) {
+    public ExtracaoIaService(ConfiguracaoService config, ParametrosSistema params) {
         this.config = config;
+        this.params = params;
     }
 
     public boolean habilitado() {
         return config.iaHabilitada();
     }
 
-    /**
-     * Pede ao modelo a estruturação dos campos. Devolve mapa nome->CampoExtraido
-     * (origem="ia"). Em qualquer falha, devolve mapa vazio (não interrompe o upload).
-     */
+    /** Notificado a cada janela de texto enviada à IA (janela atual, total). */
+    @FunctionalInterface
+    public interface ProgressoJanela {
+        void janela(int atual, int total);
+    }
+
+    private static final ProgressoJanela SEM_PROGRESSO = (atual, total) -> {
+    };
+
     public Map<String, CampoExtraido> extrairCampos(String texto) {
+        return extrairCampos(texto, SEM_PROGRESSO);
+    }
+
+    /**
+     * Pede ao modelo a estruturação dos campos. Contratos reais excedem o limite de
+     * caracteres por chamada: o texto é fatiado em janelas sobrepostas e cada uma vai
+     * ao modelo; campos repetidos entre janelas ficam com a maior confiança. Devolve
+     * mapa nome->CampoExtraido (origem="ia"). Falha de uma janela não derruba as
+     * demais; em falha total, devolve mapa vazio (não interrompe o upload).
+     */
+    public Map<String, CampoExtraido> extrairCampos(String texto, ProgressoJanela progresso) {
         String apiKey = config.getOpenRouterApiKey();
         if (apiKey == null || apiKey.isBlank() || texto == null || texto.isBlank()) {
             return Map.of();
         }
         ConfiguracaoSistema cfg = config.carregar();
         int maxChars = cfg.getOpenRouterMaxChars() != null ? cfg.getOpenRouterMaxChars() : 14000;
-        String conteudo = texto.length() > maxChars ? texto.substring(0, maxChars) : texto;
+        List<String> janelas = fatiar(texto, maxChars,
+                params.getOpenRouterSobreposicaoChars(), params.getOpenRouterMaxChunks());
+
+        Map<String, CampoExtraido> out = new LinkedHashMap<>();
+        for (int i = 0; i < janelas.size(); i++) {
+            progresso.janela(i + 1, janelas.size());
+            Map<String, CampoExtraido> parcial = chamarModelo(cfg, apiKey, janelas.get(i));
+            parcial.forEach((nome, campo) -> out.merge(nome, campo, ExtracaoIaService::maiorConfianca));
+        }
+        return out;
+    }
+
+    /** Entre duas extrações do mesmo campo (janelas distintas), fica a de maior confiança. */
+    private static CampoExtraido maiorConfianca(CampoExtraido atual, CampoExtraido novo) {
+        double cAtual = atual.getConfianca() != null ? atual.getConfianca() : 0.0;
+        double cNovo = novo.getConfianca() != null ? novo.getConfianca() : 0.0;
+        return cNovo > cAtual ? novo : atual;
+    }
+
+    /**
+     * Fatia o texto em janelas de até {@code tamanho} chars com {@code sobreposicao}
+     * de contexto entre janelas consecutivas (evita cortar o quadro-resumo ao meio).
+     * Limitado a {@code maxJanelas} para conter custo/tempo por documento.
+     */
+    static List<String> fatiar(String texto, int tamanho, int sobreposicao, int maxJanelas) {
+        List<String> janelas = new ArrayList<>();
+        if (texto.length() <= tamanho) {
+            janelas.add(texto);
+            return janelas;
+        }
+        int passo = Math.max(1, tamanho - Math.max(0, sobreposicao));
+        for (int ini = 0; ini < texto.length() && janelas.size() < Math.max(1, maxJanelas); ini += passo) {
+            int fim = Math.min(texto.length(), ini + tamanho);
+            janelas.add(texto.substring(ini, fim));
+            if (fim >= texto.length()) break;
+        }
+        return janelas;
+    }
+
+    /** Uma chamada ao modelo sobre um trecho do contrato. Falha vira mapa vazio. */
+    private Map<String, CampoExtraido> chamarModelo(ConfiguracaoSistema cfg, String apiKey, String conteudo) {
         try {
             Map<String, Object> body = Map.of(
                     "model", cfg.getOpenRouterModel(),

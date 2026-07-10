@@ -3,6 +3,7 @@ package br.com.mpgsistemas.revisionalweb.api.model;
 import lombok.Data;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 // DTO serializado como JSONB em CasoRevisional.contrato (dados brutos extraidos via OCR).
@@ -60,4 +61,7 @@ public class DadosContrato {
     // --- Composições ---
     private Map<String, CampoExtraido> camposExtraidos = new HashMap<>();
     private Map<String, String> metadadosExtracao = new HashMap<>();
+    // Candidatos por campo (IA e regex podem divergir): a extração NÃO aplica sozinha —
+    // o operador escolhe no front o que entra no formulário (POST /extracao/aplicar).
+    private Map<String, List<CampoExtraido>> candidatosExtracao = new HashMap<>();
 }
