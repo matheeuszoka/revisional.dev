@@ -42,7 +42,10 @@ public class CasoRevisionalController {
             @RequestParam(required = false) String q,
             // Filtro de status: null=todos, true=laudo pronto, false=em análise
             @RequestParam(required = false) Boolean comResultado) {
-        return PaginaResposta.de(service.listar(auditor, page, size, sort, dir, q, comResultado), CasoResumoDTO::from);
+        // Rótulo de escritório na visão cross-tenant (mapa vazio p/ papéis comuns).
+        var nomesEscritorios = service.nomesEscritorios(auditor);
+        return PaginaResposta.de(service.listar(auditor, page, size, sort, dir, q, comResultado),
+                c -> CasoResumoDTO.from(c, nomesEscritorios.get(c.getTenantId())));
     }
 
     @GetMapping("/{id}")

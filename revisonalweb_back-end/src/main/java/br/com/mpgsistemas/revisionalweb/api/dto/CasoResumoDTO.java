@@ -14,9 +14,16 @@ public record CasoResumoDTO(
         LocalDateTime criadoEm,
         LocalDateTime atualizadoEm,
         boolean temResultado,
-        String classificacaoRisco
+        String classificacaoRisco,
+        // Nome do escritório (tenant) dono do caso — preenchido só na visão
+        // cross-tenant do SUPER_ADMIN; null para os demais papéis.
+        String escritorio
 ) {
     public static CasoResumoDTO from(CasoRevisional c) {
+        return from(c, null);
+    }
+
+    public static CasoResumoDTO from(CasoRevisional c, String escritorio) {
         var contrato = c.getContrato();
         var resultado = c.getResultado();
         return new CasoResumoDTO(
@@ -28,7 +35,8 @@ public record CasoResumoDTO(
                 c.getCriadoEm(),
                 c.getAtualizadoEm(),
                 resultado != null,
-                resultado != null ? resultado.getClassificacaoRisco() : null
+                resultado != null ? resultado.getClassificacaoRisco() : null,
+                escritorio
         );
     }
 }

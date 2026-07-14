@@ -14,10 +14,12 @@ public interface CasoRevisionalRepository extends JpaRepository<CasoRevisional, 
     // opcional de status (comResultado: null=todos, true=laudo pronto, false=em análise).
     // Query NATIVA porque JPQL não navega em JSONB. ⚠️ Nativa NÃO passa pelo filtro
     // automático do @TenantId — o tenant_id vai explícito na cláusula.
+    // Escopo por papel (resolvido no Service): tenantId null = todos os escritórios
+    // (SUPER_ADMIN); cpf null = todos os auditores do escritório (ADMIN).
     String FILTRO_CASOS = """
             from table_caso_revisional c
-            where c.tenant_id = :tenantId
-              and c.owner_cpf = :cpf
+            where (cast(:tenantId as bigint) is null or c.tenant_id = :tenantId)
+              and (cast(:cpf as text) is null or c.owner_cpf = :cpf)
               and (cast(:q as text) is null
                    or c.titulo ilike '%' || cast(:q as text) || '%'
                    or (c.contrato ->> 'clienteNome') ilike '%' || cast(:q as text) || '%'
@@ -45,8 +47,8 @@ public interface CasoRevisionalRepository extends JpaRepository<CasoRevisional, 
                    count(*) filter (where c.resultado ->> 'classificacaoRisco' ilike 'Indicio tecnico forte%')    as "indicioForte",
                    count(*) filter (where c.resultado ->> 'classificacaoRisco' ilike 'Indicio tecnico moderado%') as "indicioModerado"
             from table_caso_revisional c
-            where c.tenant_id = :tenantId
-              and c.owner_cpf = :cpf
+            where (cast(:tenantId as bigint) is null or c.tenant_id = :tenantId)
+              and (cast(:cpf as text) is null or c.owner_cpf = :cpf)
             """, nativeQuery = true)
     EstatisticasCasos estatisticas(Long tenantId, String cpf);
 }

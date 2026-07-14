@@ -14,6 +14,7 @@ import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import FolderZipOutlinedIcon from '@mui/icons-material/FolderZipOutlined';
 
 import { listarCasos, excluirCaso, getRelatorio, getPacoteZip } from '../../services/casos';
+import { isSuperAdmin } from '../../services/auth';
 import { confirmExclusao, toastSuccess, toastError } from '../../services/alerts';
 import { numberToMoeda } from '../../services/moeda';
 
@@ -45,6 +46,8 @@ const COLUNAS_ORDENAVEIS = { titulo: 'Título', atualizadoEm: 'Atualizado' };
 
 export default function Casos() {
     const navigate = useNavigate();
+    // Visão cross-tenant: só o super-admin recebe casos de vários escritórios.
+    const superAdmin = isSuperAdmin();
     const [casos, setCasos] = useState([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -201,6 +204,7 @@ export default function Casos() {
                                                 {COLUNAS_ORDENAVEIS.titulo}
                                             </TableSortLabel>
                                         </TableCell>
+                                        {superAdmin && <TableCell>Escritório</TableCell>}
                                         <TableCell>Cliente</TableCell>
                                         <TableCell>Instituição</TableCell>
                                         <TableCell align="right">Valor financiado</TableCell>
@@ -222,6 +226,7 @@ export default function Casos() {
                                     {casos.map((c) => (
                                         <TableRow key={c.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate(`/casos/${c.id}`)}>
                                             <CelulaTexto max={260} bold>{c.titulo || '—'}</CelulaTexto>
+                                            {superAdmin && <CelulaTexto max={180}>{c.escritorio || '—'}</CelulaTexto>}
                                             <CelulaTexto max={200}>{c.clienteNome || '—'}</CelulaTexto>
                                             <CelulaTexto max={200}>{c.instituicao || '—'}</CelulaTexto>
                                             <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
