@@ -15,8 +15,11 @@ import br.com.mpgsistemas.revisionalweb.api.model.DadosContrato;
 import br.com.mpgsistemas.revisionalweb.api.model.EventoAuditoria;
 import br.com.mpgsistemas.revisionalweb.api.model.UploadDocumento;
 import br.com.mpgsistemas.revisionalweb.api.model.Usuario;
+import br.com.mpgsistemas.revisionalweb.api.model.UsuarioRole;
+import br.com.mpgsistemas.revisionalweb.api.model.Tenant;
 import br.com.mpgsistemas.revisionalweb.api.repository.CasoRevisionalRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.EventoAuditoriaRepository;
+import br.com.mpgsistemas.revisionalweb.api.repository.TenantRepository;
 import br.com.mpgsistemas.revisionalweb.api.repository.UploadDocumentoRepository;
 import br.com.mpgsistemas.revisionalweb.api.security.TenantContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +55,7 @@ public class CasoRevisionalService {
     private final UploadDocumentoRepository uploadRepository;
     private final EventoAuditoriaRepository eventoRepository;
     private final ProgressoExtracaoService progressoExtracao;
+    private final TenantRepository tenantRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public CasoRevisionalService(CasoRevisionalRepository repository,
@@ -65,7 +69,8 @@ public class CasoRevisionalService {
                                  ParserRegexService parserRegex,
                                  UploadDocumentoRepository uploadRepository,
                                  EventoAuditoriaRepository eventoRepository,
-                                 ProgressoExtracaoService progressoExtracao) {
+                                 ProgressoExtracaoService progressoExtracao,
+                                 TenantRepository tenantRepository) {
         this.repository = repository;
         this.calculadora = calculadora;
         this.auditoria = auditoria;
@@ -78,6 +83,7 @@ public class CasoRevisionalService {
         this.uploadRepository = uploadRepository;
         this.eventoRepository = eventoRepository;
         this.progressoExtracao = progressoExtracao;
+        this.tenantRepository = tenantRepository;
     }
 
     // Colunas reais ordenáveis, mapeadas p/ o nome físico (a listagem usa query
@@ -95,7 +101,7 @@ public class CasoRevisionalService {
         Pageable pageable = PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 100)), Sort.by(direcao, coluna));
 
         String termo = (q == null || q.isBlank()) ? null : q.trim();
-        return repository.buscarPagina(TenantContext.get(), auditor.getCpf(), termo, comResultado, pageable);
+        return repository.buscarPagina(tenantEscopo(auditor), cpfEscopo(auditor), termo, comResultado, pageable);
     }
 
     public CasoRevisional buscar(Long id, Usuario auditor) {
@@ -217,10 +223,10 @@ public class CasoRevisionalService {
         return json;
     }
 
-    /** Números do dashboard (casos do auditor no tenant corrente). */
+    /** Números do dashboard (escopo por papel: auditor=próprios, admin=escritório, super-admin=todos). */
     public EstatisticasCasosDTO estatisticas(Usuario auditor) {
         CasoRevisionalRepository.EstatisticasCasos e =
-                repository.estatisticas(TenantContext.get(), auditor.getCpf());
+                repository.estatisticas(tenantEscopo(auditor), cpfEscopo(auditor));
         return new EstatisticasCasosDTO(e.getTotal(), e.getLaudoPronto(),
                 e.getTotal() - e.getLaudoPronto(), e.getIndicioForte(), e.getIndicioModerado());
     }
@@ -529,7 +535,40 @@ public class CasoRevisionalService {
         repository.delete(caso);
     }
 
+    // Escopo de visibilidade por papel: SUPER_ADMIN enxerga todos os escritórios
+    // (tenantId null desliga a cláusula na query nativa); demais, só o próprio tenant.
+    private Long tenantEscopo(Usuario auditor) {
+        return auditor.getUsuarioRole() == UsuarioRole.ROLE_SUPER_ADMIN ? null : TenantContext.get();
+    }
+
+    // ADMIN e SUPER_ADMIN veem casos de todos os auditores (cpf null); os demais, só os próprios.
+    private String cpfEscopo(Usuario auditor) {
+        return switch (auditor.getUsuarioRole()) {
+            case ROLE_SUPER_ADMIN, ROLE_ADMIN -> null;
+            default -> auditor.getCpf();
+        };
+    }
+
+    /**
+     * Mapa id→nome dos escritórios para rotular a listagem cross-tenant.
+     * Só o SUPER_ADMIN precisa (vê casos de vários escritórios); demais papéis
+     * recebem mapa vazio e o DTO segue com escritorio null.
+     */
+    public Map<Long, String> nomesEscritorios(Usuario auditor) {
+        if (auditor.getUsuarioRole() != UsuarioRole.ROLE_SUPER_ADMIN) {
+            return Map.of();
+        }
+        return tenantRepository.findAll().stream()
+                .collect(java.util.stream.Collectors.toMap(Tenant::getId, Tenant::getNome));
+    }
+
     private boolean pertenceAo(CasoRevisional caso, Usuario auditor) {
+        if (auditor.getUsuarioRole() == UsuarioRole.ROLE_SUPER_ADMIN) {
+            return true;
+        }
+        if (auditor.getUsuarioRole() == UsuarioRole.ROLE_ADMIN) {
+            return caso.getTenantId() != null && caso.getTenantId().equals(auditor.getTenantId());
+        }
         return caso.getAuditor() != null
                 && caso.getAuditor().getCpf() != null
                 && caso.getAuditor().getCpf().equals(auditor.getCpf());

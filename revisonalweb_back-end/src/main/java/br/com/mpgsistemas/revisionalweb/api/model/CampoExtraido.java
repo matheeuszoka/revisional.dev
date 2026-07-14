@@ -1,8 +1,11 @@
 package br.com.mpgsistemas.revisionalweb.api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
 // Value object nested em DadosContrato (JSONB). Um campo extraido via OCR com confianca/evidencia.
+// ignoreUnknown: JSONB de versões antigas pode ter campos removidos da classe.
+@JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class CampoExtraido {
 
