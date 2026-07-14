@@ -1,5 +1,6 @@
 package br.com.mpgsistemas.revisionalweb.api.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -8,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 // DTO serializado como JSONB em CasoRevisional.resultado (laudo processado)
+// ignoreUnknown: JSONB de versões antigas pode ter campos removidos da classe.
+@JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class ResultadoCalculo {
 

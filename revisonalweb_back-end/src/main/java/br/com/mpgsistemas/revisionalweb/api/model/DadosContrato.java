@@ -1,5 +1,6 @@
 package br.com.mpgsistemas.revisionalweb.api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
 import java.util.HashMap;
@@ -8,6 +9,9 @@ import java.util.Map;
 
 // DTO serializado como JSONB em CasoRevisional.contrato (dados brutos extraidos via OCR).
 // NAO e uma tabela: vive dentro do JSONB do caso. Wrappers em todos numericos (null safety OCR).
+// ignoreUnknown: JSONB gravado por versões antigas pode ter campos que a classe
+// não conhece mais (ex.: candidatosExtracao) — sem isso a hidratação do caso quebra.
+@JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class DadosContrato {
 
